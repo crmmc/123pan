@@ -26,7 +26,7 @@ class Config(QConfig):
     checkUpdateAtStartUp = ConfigItem("Update", "CheckUpdateAtStartUp", True, BoolValidator())
 
 YEAR = 2026
-ABOUT_URL = "https://qfluentwidgets.com"
+ABOUT_URL = "https://github.com/123panNextGen/123pan"
 
 cfg = Config()
 cfg.themeMode.value = Theme.AUTO

@@ -1,6 +1,3 @@
-# https://github.com/123panNextGen/123pan
-# src/api.py
-
 import os
 import json
 import hashlib
