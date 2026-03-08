@@ -1,1 +1,1 @@
-C:\Python39\Lib\site-packages\PySide6\rcc.exe -g python -o .\app\common\resource.py .\app\resource\resource.qrc
+.venv\Lib\site-packages\PySide6\rcc.exe -g python -o .\app\common\resource.py .\app\resource\resource.qrc
