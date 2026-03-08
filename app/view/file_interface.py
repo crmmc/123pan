@@ -19,7 +19,7 @@ from qfluentwidgets import BreadcrumbBar, TableWidget, TreeWidget, PushButton
 
 from ..common.style_sheet import StyleSheet
 
-Pan123 = importlib.import_module("app.common.123pan_api").Pan123
+Pan123 = importlib.import_module("app.common.api").Pan123
 
 
 class FileInterface(QWidget):
