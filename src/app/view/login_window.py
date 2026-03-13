@@ -7,15 +7,14 @@ from qfluentwidgets import (NavigationAvatarWidget, NavigationItemPosition, Mess
 from qfluentwidgets import FluentIcon as FIF
 
 from ..common.api import Pan123
+from ..common.config import ConfigManager
 
-
-class LoginDialog(FluentWindow):
+class LoginDialog(QDialog):
     """登录对话框"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("登录123云盘")
-        self.setModal(True)
         self.resize(420, 150)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
@@ -38,13 +37,13 @@ class LoginDialog(FluentWindow):
         layout.addLayout(h)
 
         self.btn_ok.clicked.connect(self.on_ok)
-        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_cancel.clicked.connect(self.close)
 
         self.pan = None
         self.login_error = None
 
         # 从配置文件中加载用户名
-        config = config.ConfigManager.load_config()
+        config = ConfigManager.load_config()
         self.le_user.setText(config.get("userName", ""))
 
     def on_ok(self):
