@@ -45,6 +45,9 @@ class MainWindow(FluentWindow):
         self.transfer_interface = TransferInterface(self)
         self.setting_interface = SettingInterface(self)
 
+        # 传递传输界面引用给文件界面
+        self.file_interface.transfer_interface = self.transfer_interface
+
         self._startup_login_flow()
         self._initNavigation()
 
@@ -85,3 +88,6 @@ class MainWindow(FluentWindow):
         # 将 pan 对象传递给 file_interface 并刷新文件列表
         self.file_interface.pan = self.pan
         self.file_interface._FileInterface__loadPanAndData()
+
+        # 将 pan 对象传递给 transfer_interface
+        self.transfer_interface.set_pan(self.pan)
