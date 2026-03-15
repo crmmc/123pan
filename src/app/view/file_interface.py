@@ -542,11 +542,9 @@ class FileInterface(QWidget):
         file_name = name_item.text()
         file_type = name_item.data(Qt.ItemDataRole.UserRole + 1)
 
-        # if file_type == 1:  # 文件夹
-        #     from qfluentwidgets import InfoBar
-
-        #     InfoBar.warning(title="下载错误", content="暂不支持下载文件夹", parent=self)
-        #     return
+        # 如果是文件夹，将文件名改为xxx.zip
+        if file_type == 1:  # 文件夹
+            file_name = file_name + ".zip"
 
         # 选择保存路径
         from PyQt6.QtWidgets import QFileDialog
