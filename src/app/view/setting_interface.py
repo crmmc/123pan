@@ -114,6 +114,11 @@ class SettingInterface(ScrollArea):
         cfg.set(cfg.downloadFolder, folder)
         self.downloadFolderCard.setContent(folder)
 
+        # 同时更新默认下载位置
+        config = ConfigManager.load_config()
+        config["settings"]["defaultDownloadPath"] = folder
+        ConfigManager.save_config(config)
+
     def __onAskDownloadLocationChanged(self, checked):
         """ask download location changed slot"""
         # 加载当前配置

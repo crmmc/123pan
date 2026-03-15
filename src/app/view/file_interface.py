@@ -290,7 +290,7 @@ class FileInterface(QWidget):
             file_id = int(file_item.get("FileId", 0) or 0)
 
             type_text = "文件夹" if file_type == 1 else "文件"
-            size_text = "-" if file_type == 1 else self.__formatSize(file_size)
+            size_text = self.__formatSize(file_size)
 
             name_item = QTableWidgetItem(file_name)
             name_item.setData(Qt.ItemDataRole.UserRole, file_id)

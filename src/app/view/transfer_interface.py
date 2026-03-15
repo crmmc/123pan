@@ -6,9 +6,10 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QCoreApplication
 from PyQt6.QtGui import QFont
 import os
+import requests
 
 # 导入Pan123类
 Pan123 = __import__("app.common.api").common.api.Pan123
@@ -204,8 +205,6 @@ class DownloadThread(QThread):
 
     def __download_from_url(self, url, save_path, file_name, signals):
         """从URL下载文件"""
-        import requests
-        import os
 
         # 确保保存路径存在
         if not os.path.exists(save_path):
@@ -419,7 +418,6 @@ class TransferInterface(QWidget):
         """更新任务进度"""
         task.progress = progress
         # 使用QCoreApplication.processEvents()来确保界面响应
-        from PyQt6.QtCore import QCoreApplication
 
         QCoreApplication.processEvents()
         if isinstance(task, UploadTask):
@@ -431,7 +429,6 @@ class TransferInterface(QWidget):
         """更新任务状态"""
         task.status = status
         # 使用QCoreApplication.processEvents()来确保界面响应
-        from PyQt6.QtCore import QCoreApplication
 
         QCoreApplication.processEvents()
         if isinstance(task, UploadTask):
@@ -505,7 +502,9 @@ class TransferInterface(QWidget):
             # 操作按钮 - 只在首次创建时添加
             if not self.uploadTable.cellWidget(row, 4):
                 action_layout = QHBoxLayout()
-                delete_button = PushButton(FIF.DELETE.icon(), "删除任务", self.uploadTable)
+                delete_button = PushButton(
+                    FIF.DELETE.icon(), "删除任务", self.uploadTable
+                )
                 delete_button.setFixedSize(128, 24)
 
                 # 添加点击事件
@@ -559,7 +558,9 @@ class TransferInterface(QWidget):
             # 操作按钮 - 只在首次创建时添加
             if not self.downloadTable.cellWidget(row, 4):
                 action_layout = QHBoxLayout()
-                delete_button = PushButton(FIF.DELETE.icon(), "删除任务", self.downloadTable)
+                delete_button = PushButton(
+                    FIF.DELETE.icon(), "删除任务", self.downloadTable
+                )
                 delete_button.setFixedSize(128, 24)
 
                 # 添加点击事件
