@@ -214,11 +214,11 @@ class DownloadThread(QThread):
         """从URL下载文件"""
 
         # 确保保存路径存在
-        save_dir = Path(save_path)
+        file_path = Path(save_path)
+        save_dir = file_path.parent
         if not save_dir.exists():
             save_dir.mkdir(parents=True, exist_ok=True)
 
-        file_path = save_dir / file_name
         temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
 
         # 发送请求

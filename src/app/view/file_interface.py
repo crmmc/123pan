@@ -558,13 +558,13 @@ class FileInterface(QWidget):
 
         # 根据配置决定是否询问下载位置
         if ask_download_location:
-            # 选择保存路径
-            save_path = QFileDialog.getExistingDirectory(
-                self, "选择保存的文件夹", default_download_path
+            # 选择保存文件
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "保存文件", str(Path(default_download_path) / file_name)
             )
         else:
             # 直接使用默认下载位置
-            save_path = default_download_path
+            save_path = str(Path(default_download_path) / file_name)
 
         if save_path:
             # 获取文件大小
