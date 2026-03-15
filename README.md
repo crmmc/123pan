@@ -58,11 +58,10 @@
 │       ├── setting_interface.py
 │       └── transfer_interface.py
 ├── build.sh
-├── requirements.txt
 ├── resource_build.bat
 └── resource_build.sh
 
-8 directories, 33 files
+8 directories, 32 files
 ```
 
 ## 使用
@@ -75,21 +74,19 @@
 其他系统以及开发请参考下方的源码运行。
 
 ### 使用源码运行
-首先准备好[Python3](https://www.python.org/downloads/)环境，并克隆存储库。
+首先准备好 [Python3](https://www.python.org/downloads/) 与 [uv](https://github.com/astral-sh/uv) 环境，并克隆存储库。
 ```shell
 git clone https://github.com/123panNextGen/123pan.git
 cd 123pan/
 ```
 准备Python虚拟环境。
 ```shell
-#若网络情况较差 可以提前配置好pip镜像站
-#pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
-python -m venv .venv
-.venv/bin/pip install -r src/requirements.txt
+uv sync
+uv sync --group build # 构建环境
 ```
 然后运行`src`下的`123pan.py`即可。
 ```shell
-.venv/bin/python src/123pan.py
+uv run src/123pan.py
 ```
 
 ## 技术说明
