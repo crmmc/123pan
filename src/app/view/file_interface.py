@@ -1,6 +1,8 @@
 import importlib
+import os
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -12,10 +14,18 @@ from PyQt6.QtWidgets import (
     QWidget,
     QTreeWidgetItemIterator,
     QTableWidgetItem,
+    QInputDialog,
+    QFileDialog,
 )
 
 from qfluentwidgets import FluentIcon as FIF
-from qfluentwidgets import BreadcrumbBar, TableWidget, TreeWidget, PushButton
+from qfluentwidgets import (
+    BreadcrumbBar,
+    TableWidget,
+    TreeWidget,
+    PushButton,
+    InfoBar,
+)
 
 from ..common.style_sheet import StyleSheet
 
@@ -273,8 +283,6 @@ class FileInterface(QWidget):
         file_items = self.__fetchDirList(self.current_dir_id)
         self.fileTable.setRowCount(len(file_items))
 
-        from qfluentwidgets import FluentIcon as FIF
-
         for row, file_item in enumerate(file_items):
             file_name = file_item.get("FileName", "")
             file_type = int(file_item.get("Type", 0))
@@ -379,7 +387,6 @@ class FileInterface(QWidget):
 
     def __createNewFolder(self):
         """创建新文件夹"""
-        from PyQt6.QtWidgets import QInputDialog
 
         # 使用输入对话框
         folder_name, ok = QInputDialog.getText(self, "新建文件夹", "请输入文件夹名称:")
@@ -389,8 +396,6 @@ class FileInterface(QWidget):
             folder_name = folder_name.strip()
 
             # 创建任务执行创建文件夹操作
-            from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
-
             class CreateFolderSignals(QObject):
                 finished = pyqtSignal(bool, str, str)
 
@@ -424,14 +429,10 @@ class FileInterface(QWidget):
             # 提交任务到线程池
             QThreadPool.globalInstance().start(task)
         elif ok and not folder_name.strip():
-            from qfluentwidgets import InfoBar
-
             InfoBar.warning(title="输入错误", content="请输入文件夹名称", parent=self)
 
     def __onCreateFolderFinished(self, result, folder_name, error):
         """创建文件夹完成后的回调"""
-        from qfluentwidgets import InfoBar
-
         if result:
             # 保存树的展开状态
             expanded_items = self.__getExpandedItems()
@@ -501,9 +502,6 @@ class FileInterface(QWidget):
 
     def __uploadFile(self):
         """上传文件"""
-        from PyQt6.QtWidgets import QFileDialog
-        import os
-
         # 打开文件选择对话框
         file_paths, _ = QFileDialog.getOpenFileNames(self, "选择要上传的文件")
 
@@ -517,8 +515,6 @@ class FileInterface(QWidget):
                         file_name, file_size, file_path, self.current_dir_id
                     )
 
-            from qfluentwidgets import InfoBar
-
             InfoBar.success(
                 title="上传文件",
                 content=f"已添加 {len(file_paths)} 个上传任务",
@@ -530,8 +526,6 @@ class FileInterface(QWidget):
         # 获取选中的文件
         selected_items = self.fileTable.selectedItems()
         if not selected_items:
-            from qfluentwidgets import InfoBar
-
             InfoBar.warning(title="下载错误", content="请选择要下载的文件", parent=self)
             return
 
@@ -546,12 +540,26 @@ class FileInterface(QWidget):
         if file_type == 1:  # 文件夹
             file_name = file_name + ".zip"
 
-        # 选择保存路径
-        from PyQt6.QtWidgets import QFileDialog
+        # 导入配置管理器
+        from app.common.config import ConfigManager
 
-        save_path = QFileDialog.getExistingDirectory(
-            self, "选择保存的文件夹", file_name
+        # 获取配置
+        ask_download_location = ConfigManager.get_setting("askDownloadLocation", True)
+        default_download_path = ConfigManager.get_setting(
+            "defaultDownloadPath", os.path.join(os.path.expanduser("~"), "Downloads")
         )
+
+        save_path = None
+
+        # 根据配置决定是否询问下载位置
+        if ask_download_location:
+            # 选择保存路径
+            save_path = QFileDialog.getExistingDirectory(
+                self, "选择保存的文件夹", default_download_path
+            )
+        else:
+            # 直接使用默认下载位置
+            save_path = default_download_path
 
         if save_path:
             # 获取文件大小
@@ -575,8 +583,6 @@ class FileInterface(QWidget):
                     file_name, file_size, file_id, save_path, self.current_dir_id
                 )
 
-            from qfluentwidgets import InfoBar
-
             InfoBar.success(
                 title="下载文件",
                 content=f"已添加下载任务: {file_name}",
@@ -589,7 +595,6 @@ class FileInterface(QWidget):
 
     def __deleteFile(self, file_id=None, file_name=None):
         """删除文件"""
-        from qfluentwidgets import InfoBar
 
         # 如果没有提供file_id和file_name，则从选中的文件获取
         if file_id is None or file_name is None:
@@ -614,8 +619,6 @@ class FileInterface(QWidget):
             #     return
 
         # 创建任务执行删除文件操作
-        from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
-
         class DeleteFileSignals(QObject):
             finished = pyqtSignal(bool, str, str)
 
@@ -671,7 +674,6 @@ class FileInterface(QWidget):
 
     def __onDeleteFileFinished(self, success, file_name, error):
         """删除文件完成后的回调"""
-        from qfluentwidgets import InfoBar
 
         if success:
             # 保存树的展开状态
