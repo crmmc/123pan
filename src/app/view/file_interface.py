@@ -31,7 +31,7 @@ from qfluentwidgets import (
 )
 
 from ..common.style_sheet import StyleSheet
-from .rename_window import NewFolderDialog
+from .newfolder_window import NewFolderDialog
 
 Pan123 = importlib.import_module("app.common.api").Pan123
 
