@@ -116,6 +116,7 @@ class DownloadThread(QThread):
 
             # 记录调试信息
             from ..common.log import get_logger
+
             logger = get_logger(__name__)
             logger.debug(
                 f"下载任务: {self.task.file_name}, file_id: {self.task.file_id}, type: {type(self.task.file_id)}"
@@ -131,12 +132,16 @@ class DownloadThread(QThread):
                 self.task.current_dir_id, save=False, all=True, limit=1000
             )
             if code == 0:
-                logger.debug(f"在当前目录中查找文件，当前目录ID: {self.task.current_dir_id}")
+                logger.debug(
+                    f"在当前目录中查找文件，当前目录ID: {self.task.current_dir_id}"
+                )
                 for file in files:
                     file_id = file.get("FileId")
                     if str(file_id) == str(self.task.file_id):
                         target_file = file
-                        logger.debug(f"在当前目录中找到文件: {target_file.get('FileName')}")
+                        logger.debug(
+                            f"在当前目录中找到文件: {target_file.get('FileName')}"
+                        )
                         break
 
             # 如果还是找不到，尝试从Pan123的list属性中查找
