@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [dependency-extras]
-build = ["nuitka>=4.0.5", "pyside6>=6.10.2"]
+build = ["nuitka>=4.0.5"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"

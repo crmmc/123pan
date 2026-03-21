@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 from qfluentwidgets import qconfig, QConfig, Theme, ConfigItem, OptionsConfigItem, RangeConfigItem, OptionsValidator, RangeValidator, FolderValidator, FolderListValidator, BoolValidator, __version__
 
@@ -12,7 +13,7 @@ class Config(QConfig):
     musicFolders = ConfigItem(
         "Folders", "LocalMusic", [], FolderListValidator())
     downloadFolder = ConfigItem(
-        "Folders", "Download", "app/download", FolderValidator())
+        "Folders", "Download", str(Path.home() / "Downloads"), FolderValidator())
 
     # main window
     micaEnabled = ConfigItem("MainWindow", "MicaEnabled", isWin11(), BoolValidator())
@@ -43,10 +44,10 @@ logger = get_logger(__name__)
 
 # 配置文件路径
 if platform.system() == 'Windows':
-    CONFIG_DIR = os.path.join(os.environ.get('APPDATA', ''), 'Qxyz17', '123pan')
+    CONFIG_DIR = Path(os.environ.get('APPDATA', '')) / 'Qxyz17' / '123pan'
 else:
-    CONFIG_DIR = os.path.join(os.path.expanduser('~'), '.config', 'Qxyz17', '123pan')
-CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
+    CONFIG_DIR = Path.home() / '.config' / 'Qxyz17' / '123pan'
+CONFIG_FILE = CONFIG_DIR / 'config.json'
 
 
 class ConfigManager:
@@ -55,8 +56,8 @@ class ConfigManager:
     @staticmethod
     def ensure_config_dir():
         """确保配置目录存在"""
-        if not os.path.exists(CONFIG_DIR):
-            os.makedirs(CONFIG_DIR, exist_ok=True)
+        if not CONFIG_DIR.exists():
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     
     @staticmethod
     def load_config():
@@ -70,12 +71,12 @@ class ConfigManager:
             "osVersion": "",
             "loginuuid": "",
             "settings": {
-                "defaultDownloadPath": os.path.join(os.path.expanduser("~"), "Downloads"),
+                "defaultDownloadPath": str(Path.home() / "Downloads"),
                 "askDownloadLocation": True
             }
         }
 
-        if os.path.exists(CONFIG_FILE):
+        if CONFIG_FILE.exists():
             try:
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     config = json.load(f)

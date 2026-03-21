@@ -287,32 +287,16 @@ class FileInterface(QWidget):
         if not self.pan:
             return
 
+        # 使用后台线程加载文件列表，避免阻塞主线程
         self.fileTable.setRowCount(0)
-        file_items = self.__fetchDirList(self.current_dir_id)
-        self.fileTable.setRowCount(len(file_items))
 
-        for row, file_item in enumerate(file_items):
-            file_name = file_item.get("FileName", "")
-            file_type = int(file_item.get("Type", 0))
-            file_size = int(file_item.get("Size", 0) or 0)
-            file_id = int(file_item.get("FileId", 0) or 0)
+        # 创建信号和任务
+        signals = self.LoadListSignals()
+        signals.finished.connect(self.__onLoadListFinished)
+        task = self.LoadListTask(self.__fetchDirList, self.current_dir_id, signals)
 
-            type_text = "文件夹" if file_type == 1 else "文件"
-            size_text = format_file_size(file_size)
-
-            name_item = QTableWidgetItem(file_name)
-            name_item.setData(Qt.ItemDataRole.UserRole, file_id)
-            name_item.setData(Qt.ItemDataRole.UserRole + 1, file_type)
-            name_item.setIcon(
-                FIF.FOLDER.icon() if file_type == 1 else FIF.DOCUMENT.icon()
-            )
-
-            type_item = QTableWidgetItem(type_text)
-            size_item = QTableWidgetItem(size_text)
-
-            self.fileTable.setItem(row, 0, name_item)
-            self.fileTable.setItem(row, 1, type_item)
-            self.fileTable.setItem(row, 2, size_item)
+        # 提交任务到线程池
+        QThreadPool.globalInstance().start(task)
 
     def __fetchDirList(self, dir_id):
         if not self.pan:
@@ -329,6 +313,24 @@ class FileInterface(QWidget):
             return []
         finally:
             self.pan.file_page, self.pan.total, self.pan.all_file = cached_state
+
+    # 后台加载文件列表的信号和任务类
+    class LoadListSignals(QObject):
+        finished = pyqtSignal(list, str)  # file_items, error
+
+    class LoadListTask(QRunnable):
+        def __init__(self, fetch_method, dir_id, signals):
+            super().__init__()
+            self.fetch_method = fetch_method
+            self.dir_id = dir_id
+            self.signals = signals
+
+        def run(self):
+            try:
+                file_items = self.fetch_method(self.dir_id)
+                self.signals.finished.emit(file_items, "")
+            except Exception as e:
+                self.signals.finished.emit([], str(e))
 
     def __findTreeItemById(self, dir_id):
         iterator = QTreeWidgetItemIterator(self.folderTree)
@@ -510,6 +512,18 @@ class FileInterface(QWidget):
             self.fileTable.setItem(row, 0, name_item)
             self.fileTable.setItem(row, 1, type_item)
             self.fileTable.setItem(row, 2, size_item)
+
+    def __onLoadListFinished(self, file_items, error):
+        """加载文件列表完成后的回调 - 只负责UI更新"""
+        if error:
+            InfoBar.error(
+                title="加载失败",
+                content=f"加载文件列表时发生错误: {error}",
+                parent=self,
+            )
+        else:
+            # 更新文件列表（轻量级UI操作）
+            self.__updateFileListUI(file_items)
 
     def __updateTreeUI(self, folder_items):
         """更新树结构UI - 轻量级操作"""

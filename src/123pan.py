@@ -20,7 +20,7 @@ def main():
     app.installTranslator(translator)
 
     # # 跟随系统深色/浅色
-    # 临时使用 浅色``
+    # 临时使用 浅色
     setTheme(Theme.LIGHT)
 
     window = MainWindow()

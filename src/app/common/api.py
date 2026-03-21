@@ -8,6 +8,7 @@ import re
 import uuid
 import threading
 import concurrent.futures
+from pathlib import Path
 from .log import get_logger
 from .config import ConfigManager, all_device_type, all_os_versions
 
@@ -273,16 +274,17 @@ class Pan123:
 
     def download_from_url(self, url, file_name, download_path="download"):
         """从URL下载文件"""
-        if not os.path.exists(download_path):
+        download_dir = Path(download_path)
+        if not download_dir.exists():
             logger.info("创建下载目录")
-            os.makedirs(download_path)
+            download_dir.mkdir(parents=True, exist_ok=True)
         
-        file_path = os.path.join(download_path, file_name)
-        temp_path = file_path + ".123pan"
+        file_path = download_dir / file_name
+        temp_path = file_path.with_suffix(file_path.suffix + ".123pan")
         
         # 如果临时文件存在，删除它（防止之前的不完整下载）
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        if temp_path.exists():
+            temp_path.unlink()
         
         down = requests.get(url, stream=True, timeout=10)
         file_size = int(down.headers.get("Content-Length", 0) or 0)
@@ -402,12 +404,13 @@ class Pan123:
     def up_load(self, file_path):
         """上传文件"""
         file_path = file_path.replace('"', "").replace("\\", "/")
-        file_name = os.path.basename(file_path)
-        if not os.path.exists(file_path):
+        file_path_obj = Path(file_path)
+        file_name = file_path_obj.name
+        if not file_path_obj.exists():
             raise FileNotFoundError("文件不存在")
-        if os.path.isdir(file_path):
+        if file_path_obj.is_dir():
             raise IsADirectoryError("不支持文件夹上传")
-        fsize = os.path.getsize(file_path)
+        fsize = file_path_obj.stat().st_size
         readable_hash = self._compute_file_md5(file_path)
 
         list_up_request = {
@@ -687,14 +690,14 @@ class Pan123:
         else:
             fname = file_detail["FileName"]
 
-        out_path = os.path.join(download_dir, fname)
-        temp = out_path + ".123pan"
+        out_path = Path(download_dir) / fname
+        temp = out_path.with_suffix(out_path.suffix + ".123pan")
 
-        os.makedirs(download_dir, exist_ok=True)
+        Path(download_dir).mkdir(parents=True, exist_ok=True)
 
-        if os.path.exists(out_path):
+        if out_path.exists():
             # 由调用者决定覆盖行为
-            raise FileExistsError(out_path)
+            raise FileExistsError(str(out_path))
 
         total = 0
         accept_ranges = False
@@ -735,7 +738,7 @@ class Pan123:
                 last_progress_time = [0]  # 用于控制进度更新频率
 
                 def download_range(start, end, index):
-                    part_path = f"{temp}.part{index}"
+                    part_path = Path(str(temp) + f".part{index}")
                     headers = {"Range": f"bytes={start}-{end}"}
                     try:
                         with requests.get(redirect_url, headers=headers, stream=True, timeout=30) as r:
@@ -762,17 +765,17 @@ class Pan123:
                         return True
                     except requests.exceptions.RequestException as e:
                         logger.error(f"下载分片 {index} 失败: {e}")
-                        if os.path.exists(part_path):
+                        if part_path.exists():
                             try:
-                                os.remove(part_path)
+                                part_path.unlink()
                             except OSError:
                                 pass
                         return False
                     except Exception as e:
                         logger.error(f"下载分片 {index} 时发生未知错误: {e}")
-                        if os.path.exists(part_path):
+                        if part_path.exists():
                             try:
-                                os.remove(part_path)
+                                part_path.unlink()
                             except OSError:
                                 pass
                         return False
@@ -802,10 +805,10 @@ class Pan123:
 
                 if task and task.is_cancelled:
                     for i in range(num_threads):
-                        p = f"{temp}.part{i}"
-                        if os.path.exists(p):
+                        p = Path(str(temp) + f".part{i}")
+                        if p.exists():
                             try:
-                                os.remove(p)
+                                p.unlink()
                             except OSError:
                                 pass
                     return "已取消"
@@ -814,7 +817,7 @@ class Pan123:
                 try:
                     with open(temp, "wb") as out_f:
                         for i in range(num_threads):
-                            p = f"{temp}.part{i}"
+                            p = Path(str(temp) + f".part{i}")
                             try:
                                 with open(p, "rb") as pf:
                                     while True:
@@ -822,12 +825,12 @@ class Pan123:
                                         if not chunk:
                                             break
                                         out_f.write(chunk)
-                                os.remove(p)
+                                p.unlink()
                             except OSError as e:
                                 logger.error(f"合并分片文件 {i} 时出错: {e}")
-                                if os.path.exists(p):
+                                if p.exists():
                                     try:
-                                        os.remove(p)
+                                        p.unlink()
                                     except OSError:
                                         pass
                                 raise RuntimeError(f"合并分片文件失败: {e}")
@@ -836,14 +839,14 @@ class Pan123:
                     raise RuntimeError("合并分片文件失败")
 
                 if task and task.is_cancelled:
-                    if os.path.exists(temp):
+                    if temp.exists():
                         try:
-                            os.remove(temp)
+                            temp.unlink()
                         except OSError:
                             pass
                     return "已取消"
 
-                os.replace(temp, out_path)
+                temp.replace(out_path)
                 return out_path
             else:
                 with requests.get(redirect_url, stream=True, timeout=30) as r:
@@ -858,8 +861,8 @@ class Pan123:
                                     pass
                                 if task.is_cancelled:
                                     f.close()
-                                    if os.path.exists(temp):
-                                        os.remove(temp)
+                                    if temp.exists():
+                                        temp.unlink()
                                     return "已取消"
                             if chunk:
                                 f.write(chunk)
@@ -867,15 +870,15 @@ class Pan123:
                                 if total and signals:
                                     signals.progress.emit(int(done * 100 / total))
                 if task and task.is_cancelled:
-                    if os.path.exists(temp):
-                        os.remove(temp)
+                    if temp.exists():
+                        temp.unlink()
                     return "已取消"
-                os.replace(temp, out_path)
+                temp.replace(out_path)
                 return out_path
         except Exception:
-            if os.path.exists(temp):
+            if temp.exists():
                 try:
-                    os.remove(temp)
+                    temp.unlink()
                 except Exception:
                     pass
             raise
@@ -886,12 +889,13 @@ class Pan123:
         与 MainWindow 的 ThreadedTask 接口兼容。
         """
         file_path = file_path.replace('"', "").replace("\\", "/")
-        file_name = os.path.basename(file_path)
-        if not os.path.exists(file_path):
+        file_path_obj = Path(file_path)
+        file_name = file_path_obj.name
+        if not file_path_obj.exists():
             raise FileNotFoundError("文件不存在")
-        if os.path.isdir(file_path):
+        if file_path_obj.is_dir():
             raise IsADirectoryError("不支持文件夹上传")
-        fsize = os.path.getsize(file_path)
+        fsize = file_path_obj.stat().st_size
 
         md5 = hashlib.md5()
         with open(file_path, "rb") as f:
@@ -1130,12 +1134,12 @@ class FileDataManager:
     @staticmethod
     def get_file_extension(filename):
         """获取文件扩展名"""
-        return os.path.splitext(filename)[1].lower()
+        return Path(filename).suffix.lower()
 
     @staticmethod
     def validate_file_exists(file_path):
         """验证文件是否存在"""
-        return os.path.isfile(file_path)
+        return Path(file_path).is_file()
 
     @staticmethod
     def is_duplicate_filename(pan_instance, filename):
