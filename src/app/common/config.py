@@ -32,7 +32,6 @@ VERSION = "3.0.1"
 
 cfg = Config()
 cfg.themeMode.value = Theme.AUTO
-# qconfig.load('app/config/config.json', cfg)
 
 
 import os
