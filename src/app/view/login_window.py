@@ -11,6 +11,9 @@ from qfluentwidgets import (
 
 from ..common.api import Pan123
 from ..common.config import ConfigManager
+from ..common.log import get_logger
+
+logger = get_logger(__name__)
 
 
 class LoginDialog(QDialog):
@@ -21,9 +24,9 @@ class LoginDialog(QDialog):
         self.setWindowTitle("登录123云盘")
         self.resize(460, 320)
         self.setFixedSize(460, 320)
-        self.setWindowFlags(
-            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
-        )
+        # self.setWindowFlags(
+        #     self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
+        # )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 30, 40, 30)
@@ -86,10 +89,7 @@ class LoginDialog(QDialog):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             # 构造123pan并登录（优先读取已保存的设备信息，避免每次创建新设备）
-            try:
-                self.pan = Pan123(readfile=True, input_pwd=False)
-            except Exception:
-                self.pan = Pan123(readfile=True, input_pwd=False)
+            self.pan = Pan123(readfile=True, input_pwd=False)
 
             # 覆盖用户名/密码（配置文件可能保存了旧账号）
             self.pan.user_name = user
@@ -113,8 +113,11 @@ class LoginDialog(QDialog):
         try:
             if hasattr(self.pan, "save_file"):
                 self.pan.save_file()
-        except Exception:
-            pass
+        except (IOError, OSError) as e:
+            # 忽略配置文件保存失败,不影响登录流程
+            logger.warning(f"保存配置失败: {e}")
+        except Exception as e:
+            logger.error(f"保存配置时发生未知错误: {e}")
         self.accept()
 
     def get_pan(self):

@@ -10,12 +10,12 @@ from qfluentwidgets import (
 )
 
 
-class NewFolderDialog(QDialog):
-    """新建文件夹弹窗"""
+class RenameDialog(QDialog):
+    """重命名弹窗"""
 
-    def __init__(self, parent=None):
+    def __init__(self, old_name, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("新建文件夹")
+        self.setWindowTitle("重命名")
         self.resize(400, 180)
         self.setWindowFlags(
             self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
@@ -26,16 +26,16 @@ class NewFolderDialog(QDialog):
         layout.setSpacing(20)
 
         # 标题
-        title = TitleLabel("新建文件夹")
+        title = TitleLabel("重命名")
         layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 提示信息
-        hint = BodyLabel("请输入文件夹名称")
+        hint = BodyLabel("请输入新的名称")
         layout.addWidget(hint, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 输入框
         self.name_input = LineEdit()
-        self.name_input.setText("新建文件夹")
+        self.name_input.setText(old_name)
         self.name_input.selectAll()
         self.name_input.returnPressed.connect(self.accept)
         layout.addWidget(self.name_input)
