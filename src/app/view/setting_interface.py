@@ -12,7 +12,8 @@ from qfluentwidgets import (
 )
 from qfluentwidgets import FluentIcon as FIF
 
-from ..common.config import cfg, YEAR, ABOUT_URL, isWin11, VERSION, ConfigManager
+from ..common.config import cfg, isWin11, ConfigManager
+from ..common.const import YEAR, ABOUT_URL, VERSION
 from ..common.style_sheet import StyleSheet
 
 

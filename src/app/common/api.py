@@ -10,7 +10,8 @@ import threading
 import concurrent.futures
 from pathlib import Path
 from .log import get_logger
-from .config import ConfigManager, all_device_type, all_os_versions
+from .config import ConfigManager
+from .const import all_device_type, all_os_versions
 
 logger = get_logger(__name__)
 
