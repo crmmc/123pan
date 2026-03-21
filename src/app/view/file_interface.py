@@ -888,6 +888,134 @@ class FileInterface(QWidget):
                 # 显示错误信息
                 InfoBar.error(title="删除失败", content="文件不存在", parent=self)
 
+    def __renameFile(self):
+        """重命名文件"""
+
+        # 获取选中的文件
+        selected_items = self.fileTable.selectedItems()
+        if not selected_items:
+            InfoBar.warning(title="重命名错误", content="请选择要重命名的文件", parent=self)
+            return
+
+        # 获取选中行的文件信息
+        row = selected_items[0].row()
+        name_item = self.fileTable.item(row, 0)
+        file_id = name_item.data(Qt.ItemDataRole.UserRole)
+        old_name = name_item.text()
+        file_type = name_item.data(Qt.ItemDataRole.UserRole + 1)
+
+        # 使用输入对话框获取新名称
+        new_name, ok = QInputDialog.getText(
+            self,
+            "重命名",
+            "请输入新的名称:",
+            text=old_name
+        )
+
+        if not ok or not new_name.strip():
+            return
+
+        # 检查新名称是否与旧名称相同
+        if new_name.strip() == old_name:
+            InfoBar.warning(title="重命名错误", content="新名称与旧名称相同", parent=self)
+            return
+
+        # 检查新名称是否为空
+        if not new_name.strip():
+            InfoBar.warning(title="重命名错误", content="名称不能为空", parent=self)
+            return
+
+        # 检查新名称是否包含无效字符
+        invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+        if any(char in new_name for char in invalid_chars):
+            InfoBar.warning(title="重命名错误", content=f"名称不能包含以下字符: {' '.join(invalid_chars)}", parent=self)
+            return
+
+        # 创建任务执行重命名操作
+        class RenameFileSignals(QObject):
+            finished = pyqtSignal(bool, str, str, str, list, list)  # success, old_name, new_name, error, file_items, folder_items
+
+        class RenameFileTask(QRunnable):
+            def __init__(self, pan, file_id, old_name, new_name, current_dir_id, signals):
+                super().__init__()
+                self.pan = pan
+                self.file_id = file_id
+                self.old_name = old_name
+                self.new_name = new_name
+                self.current_dir_id = current_dir_id
+                self.signals = signals
+
+            def run(self):
+                try:
+                    # 调用API重命名文件
+                    success = self.pan.rename_file(self.file_id, self.new_name)
+
+                    if success:
+                        # 在后台线程中获取最新的文件列表
+                        cached_state = (self.pan.file_page, self.pan.total, self.pan.all_file)
+                        self.pan.file_page = 0
+                        code, items = self.pan.get_dir_by_id(
+                            self.current_dir_id, save=False, all=True, limit=100
+                        )
+                        self.pan.file_page, self.pan.total, self.pan.all_file = cached_state
+
+                        # 在后台线程中获取文件夹列表（用于更新树）
+                        folder_items = []
+                        if code == 0:
+                            for item in items:
+                                if int(item.get("Type", 0)) == 1:
+                                    folder_items.append({
+                                        "FileId": item.get("FileId"),
+                                        "FileName": item.get("FileName")
+                                    })
+
+                        self.signals.finished.emit(True, self.old_name, self.new_name, "", items, folder_items)
+                    else:
+                        self.signals.finished.emit(False, self.old_name, self.new_name, "重命名失败", [], [])
+                except Exception as e:
+                    self.signals.finished.emit(False, self.old_name, self.new_name, str(e), [], [])
+
+        # 创建信号和任务
+        signals = RenameFileSignals()
+        signals.finished.connect(self.__onRenameFileFinished)
+        task = RenameFileTask(self.pan, file_id, old_name, new_name, self.current_dir_id, signals)
+
+        # 提交任务到线程池
+        QThreadPool.globalInstance().start(task)
+
+    def __onRenameFileFinished(self, success, old_name, new_name, error, file_items, folder_items):
+        """重命名文件完成后的回调 - 只负责UI更新"""
+
+        if success:
+            # 显示成功信息
+            InfoBar.success(
+                title="重命名成功",
+                content=f"文件 '{old_name}' 已成功重命名为 '{new_name}'",
+                parent=self,
+            )
+
+            # 更新文件列表（轻量级UI操作）
+            self.__updateFileListUI(file_items)
+
+            # 更新树结构（轻量级UI操作）
+            self.__updateTreeUI(folder_items)
+
+            # 重新选择当前目录
+            current_item = self.__findTreeItemById(self.current_dir_id)
+            if current_item:
+                self.folderTree.setCurrentItem(current_item)
+        else:
+            if error:
+                # 显示错误信息
+                InfoBar.error(
+                    title="重命名失败",
+                    content=f"重命名文件时发生错误: {error}",
+                    parent=self,
+                )
+            else:
+                # 显示错误信息
+                InfoBar.error(title="重命名失败", content="重命名失败", parent=self)
+
     def __onFileTableContextMenu(self, position):
         """文件表格右键菜单"""
         # 获取鼠标点击位置的行
@@ -900,6 +1028,11 @@ class FileInterface(QWidget):
 
         # 创建右键菜单
         menu = QMenu(self)
+
+        # 添加重命名菜单项
+        rename_action = QAction(FIF.EDIT.icon(), "重命名", self)
+        rename_action.triggered.connect(self.__renameFile)
+        menu.addAction(rename_action)
 
         # 添加删除菜单项
         delete_action = QAction(FIF.DELETE.icon(), "删除", self)

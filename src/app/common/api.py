@@ -376,6 +376,37 @@ class Pan123:
         message = dele_json.get("message", "")
         logger.info(f"删除文件消息: {message}")
 
+    def rename_file(self, file_id, new_name):
+        """重命名文件或文件夹
+        
+        Args:
+            file_id: 文件或文件夹的ID
+            new_name: 新的文件名
+            
+        Returns:
+            bool: 是否成功
+        """
+        data = {
+            "driveId": 0,
+            "fileId": file_id,
+            "fileName": new_name
+        }
+        rename_res = requests.post(
+            "https://www.123pan.com/a/api/file/rename",
+            data=json.dumps(data),
+            headers=self.header_logined,
+            timeout=10
+        )
+        rename_json = rename_res.json()
+        code = rename_json.get("code", -1)
+        logger.debug(f"重命名文件响应: {rename_json}")
+        if code != 0:
+            message = rename_json.get("message", "")
+            logger.error(f"重命名失败: {message}")
+            return False
+        logger.info(f"重命名成功: {new_name}")
+        return True
+
     def share(self, file_id_list, share_pwd=""):
         """分享文件"""
         if not file_id_list:
