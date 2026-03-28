@@ -27,6 +27,10 @@ from qfluentwidgets import (
 from ..common.style_sheet import StyleSheet
 from ..common.api import format_file_size
 
+from ..common.log import get_logger
+
+logger = get_logger(__name__)
+
 
 class TransferTask:
     """传输任务基类"""

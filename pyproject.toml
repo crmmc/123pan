@@ -1,6 +1,6 @@
 [project]
 name = "123pan"
-version = "3.0.4"
+version = "3.0.5"
 description = "第三方123云盘客户端，解决了123云盘电脑客户端限制每日1GB自用流量的问题 "
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,7 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 build = ["nuitka>=4.0.5"]
-lint = ["pylint>=4.0.5"]
+lint = ["pylint>=4.0.5", "mypy>=1.19.1"]
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"
