@@ -28,11 +28,11 @@ from .file_interface import FileInterface
 from .transfer_interface import TransferInterface
 from .setting_interface import SettingInterface
 from .cloud_interface import CloudInterface
-from .login_window import LoginDialog
+from .login_window import LoginDialog, login_with_credentials, should_auto_login
 
 from ..common import resource
 from ..common.api import Pan123
-from ..common.config import ConfigManager
+from ..common.database import Database
 
 
 class MainWindow(FluentWindow):
@@ -59,7 +59,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(
             self.cloud_interface,
             FIF.CLOUD,
-            "云盘",
+            "账户",
             position=NavigationItemPosition.BOTTOM,
         )
         self.addSubInterface(
@@ -69,24 +69,33 @@ class MainWindow(FluentWindow):
             position=NavigationItemPosition.BOTTOM,
         )
 
-    def _startup_login_flow(self):
-        cfg_loaded = False
-        cfg = ConfigManager.load_config()
-        if ConfigManager.get_setting(
-                "userName"
-        ) and ConfigManager.get_setting("passWord"):
-            try:
-                self.pan = Pan123(readfile=True, input_pwd=False)
-                res_code = self.pan.get_dir(save=False)[0]
-                if res_code == 0:
-                    cfg_loaded = True
-                else:
-                    cfg_loaded = False
-            except Exception:
-                cfg_loaded = False
+        self.stackedWidget.currentChanged.connect(self._onPageChanged)
 
-        if not cfg_loaded:
+    def _onPageChanged(self, index):
+        widget = self.stackedWidget.widget(index)
+        if widget is self.file_interface and hasattr(self, "pan"):
+            self.file_interface._FileInterface__refreshFileList()
+
+    def _startup_login_flow(self):
+        db = Database.instance()
+        auto_login_error = None
+        if should_auto_login(db):
+            try:
+                self.pan = login_with_credentials(
+                    db.get_config("userName", ""),
+                    db.get_config("passWord", ""),
+                )
+            except Exception as exc:
+                auto_login_error = str(exc)
+
+        if auto_login_error or not hasattr(self, "pan"):
             dlg = LoginDialog(self)
+            if auto_login_error:
+                MessageBox(
+                    "自动登录失败",
+                    f"{auto_login_error}\n请手动重新登录。",
+                    self,
+                ).exec()
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 # QMessageBox.information(self, "提示", "未登录，程序将退出。")
                 QTimer.singleShot(0, self.close)
@@ -108,15 +117,9 @@ class MainWindow(FluentWindow):
 
     def clear_login_config(self):
         """清除登录配置信息"""
-        config = ConfigManager.load_config()
-        # 清除登录相关的信息
-        config["userName"] = ""
-        config["passWord"] = ""
-        config["authorization"] = ""
-        config["deviceType"] = ""
-        config["osVersion"] = ""
-        config["loginuuid"] = ""
-        ConfigManager.save_config(config)
+        db = Database.instance()
+        for key in ("userName", "passWord", "authorization", "deviceType", "osVersion", "loginuuid"):
+            db.set_config(key, "")
 
     def handle_logout(self):
         """处理退出登录请求"""

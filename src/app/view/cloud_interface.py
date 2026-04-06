@@ -37,14 +37,6 @@ class CloudInterface(QWidget):
         self.mainLayout.setContentsMargins(24, 20, 24, 24)
         self.mainLayout.setSpacing(12)
 
-        # 添加标题
-        title_label = QLabel("云盘信息")
-        title_font = QFont()
-        title_font.setPointSize(20)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
-        self.mainLayout.addWidget(title_label)
-
         # 创建设置卡片组
         self.accountGroup = SettingCardGroup("账户信息", self)
 
