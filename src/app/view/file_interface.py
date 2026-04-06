@@ -1,8 +1,7 @@
-import importlib
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject, QTimer
+from PyQt6.QtCore import QEvent, QRunnable, QThreadPool, pyqtSignal, QObject, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -31,6 +30,7 @@ from qfluentwidgets import (
     BodyLabel,
     IconWidget,
     ProgressBar,
+    RoundMenu,
 )
 
 from ..common.style_sheet import StyleSheet
@@ -41,8 +41,6 @@ from .newfolder_window import NewFolderDialog
 from .rename_window import RenameDialog
 
 logger = get_logger(__name__)
-
-Pan123 = importlib.import_module("app.common.api").Pan123
 
 
 class FileInterface(QWidget):
@@ -89,6 +87,10 @@ class FileInterface(QWidget):
             FIF.FOLDER_ADD.icon(), "新建文件夹", self.topBarFrame
         )
         self.uploadButton = PushButton(FIF.UP.icon(), "上传", self.topBarFrame)
+        upload_menu = RoundMenu(parent=self)
+        upload_menu.addAction(Action(FIF.FILE.icon(), "上传文件", triggered=self.__uploadFile))
+        upload_menu.addAction(Action(FIF.FOLDER.icon(), "上传文件夹", triggered=self.__uploadFolder))
+        self.uploadButton.setMenu(upload_menu)
         self.downloadButton = PushButton(FIF.DOWNLOAD.icon(), "下载", self.topBarFrame)
         self.deleteButton = PushButton(FIF.DELETE.icon(), "删除", self.topBarFrame)
         self.refreshButton = PushButton(FIF.UPDATE.icon(), "刷新", self.topBarFrame)
@@ -191,10 +193,33 @@ class FileInterface(QWidget):
     def __initWidget(self):
         StyleSheet.VIEW_INTERFACE.apply(self)
         self.__connectSignalToSlot()
+        self.setAcceptDrops(True)
+        self.fileTable.viewport().setAcceptDrops(True)
+        self.fileTable.viewport().installEventFilter(self)
         # 为文件表格添加右键菜单
         self.fileTable.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.fileTable.customContextMenuRequested.connect(self.__onFileTableContextMenu)
         self.__loadPanAndData()
+
+    def eventFilter(self, watched, event):
+        if watched is self.fileTable.viewport() and self.__handleDropEvent(event):
+            return True
+        return super().eventFilter(watched, event)
+
+    def dragEnterEvent(self, event):
+        if self.__handleDropEvent(event):
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if self.__handleDropEvent(event):
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if self.__handleDropEvent(event):
+            return
+        super().dropEvent(event)
 
     def __connectSignalToSlot(self):
         self.backButton.clicked.connect(self.__goParentDir)
@@ -203,14 +228,61 @@ class FileInterface(QWidget):
         self.fileTable.itemDoubleClicked.connect(self.__onTableItemDoubleClicked)
         self.breadcrumbBar.currentItemChanged.connect(self.__onBreadcrumbItemChanged)
         self.newFolderButton.clicked.connect(self.__createNewFolder)
-        self.uploadButton.clicked.connect(self.__uploadFile)
         self.downloadButton.clicked.connect(self.__downloadFile)
         self.deleteButton.clicked.connect(self.__deleteFile)
         self.refreshButton.clicked.connect(self.__refreshFileList)
 
+    def __handleDropEvent(self, event):
+        event_type = event.type()
+        if event_type in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            result = self.__acceptLocalDrop(event)
+            if result:
+                self.fileTable.viewport().setStyleSheet(
+                    "border: 2px dashed #0078d4; border-radius: 8px;"
+                )
+            return result
+        if event_type == QEvent.Type.DragLeave:
+            self.fileTable.viewport().setStyleSheet("")
+            return False
+        if event_type == QEvent.Type.Drop:
+            self.fileTable.viewport().setStyleSheet("")
+            return self.__dropLocalPaths(event)
+        return False
+
+    def __acceptLocalDrop(self, event):
+        if not self.__extractLocalPaths(event.mimeData()):
+            return False
+        event.acceptProposedAction()
+        return True
+
+    def __dropLocalPaths(self, event):
+        local_paths = self.__extractLocalPaths(event.mimeData())
+        if not local_paths:
+            return False
+        event.acceptProposedAction()
+        self.__prepareLocalUploads(local_paths)
+        return True
+
+    @staticmethod
+    def __extractLocalPaths(mime_data):
+        if mime_data is None or not mime_data.hasUrls():
+            return []
+
+        local_paths = []
+        seen = set()
+        for url in mime_data.urls():
+            if not url.isLocalFile():
+                continue
+            local_file = url.toLocalFile().strip()
+            if not local_file or local_file in seen:
+                continue
+            seen.add(local_file)
+            local_paths.append(Path(local_file))
+
+        return local_paths
+
     def __loadPanAndData(self):
         try:
-            self.pan = Pan123(readfile=True)
             self.__initTree()
             self.__loadCurrentList()
             self.__updateBreadcrumb()
@@ -385,6 +457,54 @@ class FileInterface(QWidget):
                 self.signals.finished.emit(file_items, "")
             except Exception as e:
                 self.signals.finished.emit([], str(e))
+
+    class PrepareUploadTask(QRunnable):
+        class PrepareUploadSignals(QObject):
+            finished = pyqtSignal(list, int, list, str)
+
+        def __init__(self, pan, target_dir_id, local_paths):
+            super().__init__()
+            self.pan = pan
+            self.target_dir_id = target_dir_id
+            self.local_paths = local_paths
+            self.signals = self.PrepareUploadSignals()
+
+        def run(self):
+            try:
+                uploads = []
+                created_dir_count = 0
+                folder_items = []
+                for local_path in self.local_paths:
+                    path = Path(local_path)
+                    if not path.exists():
+                        raise FileNotFoundError(f"路径不存在: {path}")
+
+                    if path.is_dir():
+                        plan = self.pan.prepare_folder_upload(
+                            path, self.target_dir_id
+                        )
+                        uploads.extend(plan["file_targets"])
+                        created_dir_count += int(plan["created_dir_count"])
+                        folder_items.append(
+                            {
+                                "FileId": plan["root_dir_id"],
+                                "FileName": plan["root_dir_name"],
+                            }
+                        )
+                        continue
+
+                    uploads.append(
+                        {
+                            "file_name": path.name,
+                            "file_size": path.stat().st_size,
+                            "local_path": str(path),
+                            "target_dir_id": self.target_dir_id,
+                        }
+                    )
+
+                self.signals.finished.emit(uploads, created_dir_count, folder_items, "")
+            except Exception as e:
+                self.signals.finished.emit([], 0, [], str(e))
 
     def __findTreeItemById(self, dir_id):
         iterator = QTreeWidgetItemIterator(self.folderTree)
@@ -574,6 +694,7 @@ class FileInterface(QWidget):
             name_item = QTableWidgetItem(file_name)
             name_item.setData(Qt.ItemDataRole.UserRole, file_id)
             name_item.setData(Qt.ItemDataRole.UserRole + 1, file_type)
+            name_item.setData(Qt.ItemDataRole.UserRole + 2, dict(file_item))
             name_item.setIcon(
                 FIF.FOLDER.icon() if file_type == 1 else FIF.DOCUMENT.icon()
             )
@@ -728,21 +849,74 @@ class FileInterface(QWidget):
         file_paths, _ = QFileDialog.getOpenFileNames(self, "选择要上传的文件")
 
         if file_paths:
-            # 添加上传任务到传输界面
-            for file_path in file_paths:
-                path = Path(file_path)
-                file_name = path.name
-                file_size = path.stat().st_size
-                if self.transfer_interface:
-                    self.transfer_interface.add_upload_task(
-                        file_name, file_size, file_path, self.current_dir_id
-                    )
+            self.__prepareLocalUploads([Path(file_path) for file_path in file_paths])
 
-            InfoBar.success(
-                title="上传文件",
-                content=f"已添加 {len(file_paths)} 个上传任务",
+    def __uploadFolder(self):
+        """上传文件夹"""
+        folder_path = QFileDialog.getExistingDirectory(self, "选择要上传的文件夹")
+        if folder_path:
+            self.__prepareLocalUploads([Path(folder_path)])
+
+    def __prepareLocalUploads(self, local_paths):
+        if not self.pan:
+            InfoBar.error(title="上传失败", content="当前未登录", parent=self)
+            return
+        if not self.transfer_interface:
+            InfoBar.error(title="上传失败", content="传输页面未初始化", parent=self)
+            return
+        if not local_paths:
+            return
+
+        task = self.PrepareUploadTask(
+            self.pan,
+            self.current_dir_id,
+            [str(path) for path in local_paths],
+        )
+        task.signals.finished.connect(self.__onPrepareUploadFinished)
+        QThreadPool.globalInstance().start(task)
+
+    def __onPrepareUploadFinished(
+        self, uploads, created_dir_count, folder_items, error
+    ):
+        if error:
+            InfoBar.error(
+                title="上传准备失败",
+                content=f"准备上传任务时发生错误: {error}",
                 parent=self,
             )
+            return
+
+        added_count = 0
+        for upload in uploads:
+            self.transfer_interface.add_upload_task(
+                upload["file_name"],
+                upload["file_size"],
+                upload["local_path"],
+                upload["target_dir_id"],
+            )
+            added_count += 1
+
+        if folder_items:
+            self.__updateTreeUI(folder_items)
+        if uploads or folder_items:
+            self.__refreshFileList()
+
+        InfoBar.success(
+            title="上传文件",
+            content=self.__buildUploadSummary(added_count, created_dir_count),
+            parent=self,
+        )
+
+    @staticmethod
+    def __buildUploadSummary(upload_count, created_dir_count):
+        if upload_count and created_dir_count:
+            return (
+                f"已添加 {upload_count} 个上传任务，"
+                f"创建 {created_dir_count} 个文件夹"
+            )
+        if created_dir_count:
+            return f"已创建 {created_dir_count} 个文件夹"
+        return f"已添加 {upload_count} 个上传任务"
 
     def __downloadFile(self):
         """下载文件"""
@@ -758,17 +932,18 @@ class FileInterface(QWidget):
         file_id = name_item.data(Qt.ItemDataRole.UserRole)
         file_name = name_item.text()
         file_type = name_item.data(Qt.ItemDataRole.UserRole + 1)
+        file_meta = name_item.data(Qt.ItemDataRole.UserRole + 2) or {}
 
         # 如果是文件夹，将文件名改为xxx.zip
         if file_type == 1:  # 文件夹
             file_name = file_name + ".zip"
 
-        # 导入配置管理器
-        from app.common.config import ConfigManager
+        # 导入数据库
+        from app.common.database import Database
 
         # 获取配置
-        ask_download_location = ConfigManager.get_setting("askDownloadLocation", True)
-        default_download_path = ConfigManager.get_setting(
+        ask_download_location = Database.instance().get_config("askDownloadLocation", True)
+        default_download_path = Database.instance().get_config(
             "defaultDownloadPath", str(Path.home() / "Downloads")
         )
 
@@ -785,25 +960,19 @@ class FileInterface(QWidget):
             )
 
         if save_path:
-            # 获取文件大小
-            size_item = self.fileTable.item(row, 2)
-            file_size = 0
-            if size_item:
-                size_text = size_item.text()
-                # 简单解析文件大小
-                if size_text.endswith(" B"):
-                    file_size = int(size_text.split(" ")[0])
-                elif size_text.endswith(" KB"):
-                    file_size = int(float(size_text.split(" ")[0]) * 1024)
-                elif size_text.endswith(" MB"):
-                    file_size = int(float(size_text.split(" ")[0]) * 1024 * 1024)
-                elif size_text.endswith(" GB"):
-                    file_size = int(float(size_text.split(" ")[0]) * 1024 * 1024 * 1024)
+            file_size = int(file_meta.get("Size", 0) or 0)
 
             # 添加下载任务到传输界面
             if self.transfer_interface:
                 self.transfer_interface.add_download_task(
-                    file_name, file_size, file_id, save_path, self.current_dir_id
+                    file_name,
+                    file_size,
+                    file_id,
+                    save_path,
+                    self.current_dir_id,
+                    file_type=file_type,
+                    etag=file_meta.get("Etag", ""),
+                    s3key_flag=file_meta.get("S3KeyFlag", False),
                 )
 
             InfoBar.success(
