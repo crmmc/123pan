@@ -84,7 +84,6 @@
 | Windows | ARM64 | `123pan-windows-arm64.exe` |
 | Linux | x64 | `123pan-linux-x64` |
 | Linux | ARM64 | `123pan-linux-arm64` |
-| macOS | Intel | `123pan-macos-x64` |
 | macOS | Apple Silicon | `123pan-macos-arm64` |
 
 ### 从源码运行
@@ -115,14 +114,21 @@ bash script/build.sh
 | 数据存储 | SQLite（配置 + 任务持久化） |
 | 打包工具 | Nuitka（编译为单文件可执行） |
 | 包管理 | uv |
-| CI/CD | GitHub Actions（6 平台自动构建 + Release） |
+| CI/CD | GitHub Actions（5 平台自动构建 + Release） |
 | 质量保证 | mypy + pylint + pytest |
 
 ## 许可证
 
 [Apache 2.0](./LICENSE)
 
-**本工具仅用于学习研究，请勿用于商业用途。使用者需遵守 123 云盘用户协议，滥用可能导致账号限制。**
+## 免责声明
+
+本项目为个人学习与技术研究目的开发，与 123 云盘官方无任何关联。使用本软件即表示您已知晓并同意以下内容：
+
+- 本软件按「现状」提供，不提供任何明示或暗示的保证
+- 开发者不对因使用本软件导致的任何直接或间接损失承担责任，包括但不限于数据丢失、账号封禁、服务中断等
+- 使用者应自行承担使用本软件的全部风险，并遵守 123 云盘用户协议及相关法律法规
+- 请勿将本软件用于商业用途
 
 ## 致谢
 
