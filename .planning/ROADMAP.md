@@ -80,7 +80,7 @@ Plans:
   5. 用户可以从二维码界面返回密码登录界面
 **Plans**: 2 plans
 Plans:
-- [ ] 04-01-PLAN.md -- Pan123 QR API 方法 + 依赖 + 测试
+- [x] 04-01-PLAN.md -- Pan123 QR API 方法 + 依赖 + 测试
 - [ ] 04-02-PLAN.md -- LoginDialog Tab 改造 + QRLoginPage widget + QR 登录测试 + 人工验证
 **UI hint**: yes
 
