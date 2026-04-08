@@ -422,6 +422,59 @@ class Pan123:
             return None
         return res_json.get("data")
 
+    def qr_generate(self):
+        """获取二维码登录会话（uniID + url）。"""
+        headers = {
+            "loginuuid": self.loginuuid,
+            "app-version": "3",
+            "platform": "web",
+            "content-type": "application/json;charset=UTF-8",
+        }
+        with self._session_lock:
+            res = self.session.get(
+                "https://login.123pan.com/api/user/qr-code/generate",
+                headers=headers,
+                timeout=10,
+            )
+        res_json = _parse_json_response(res)
+        code = res_json.get("code", -1)
+        if code != 0:
+            raise RuntimeError(
+                f"获取二维码失败: code={code}, "
+                f"message={res_json.get('message', '')}"
+            )
+        data = res_json.get("data", {})
+        return {"uniID": data.get("uniID", ""), "url": data.get("url", "")}
+
+    def qr_poll(self, uni_id):
+        """轮询二维码扫码状态。返回 dict 包含 loginStatus 和可能的 token。"""
+        headers = {
+            "loginuuid": self.loginuuid,
+            "app-version": "3",
+            "platform": "web",
+            "content-type": "application/json;charset=UTF-8",
+        }
+        with self._session_lock:
+            res = self.session.get(
+                "https://login.123pan.com/api/user/qr-code/result",
+                headers=headers,
+                params={"uniID": uni_id},
+                timeout=10,
+            )
+        res_json = _parse_json_response(res)
+        code = res_json.get("code", -1)
+        if code != 0:
+            raise RuntimeError(
+                f"轮询扫码状态失败: code={code}, "
+                f"message={res_json.get('message', '')}"
+            )
+        data = res_json.get("data", {})
+        result = {"loginStatus": data.get("loginStatus", -1)}
+        token = data.get("token")
+        if token:
+            result["token"] = token
+        return result
+
     def file_details(self, file_ids):
         """获取文件/文件夹详情"""
         data = {"file_ids": file_ids}
