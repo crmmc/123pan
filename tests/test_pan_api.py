@@ -680,7 +680,7 @@ class TestQrPoll:
     """qr_poll() 单元测试"""
 
     def test_qr_poll_waiting(self, pan):
-        """Test 4: loginStatus=0 时返回 {"loginStatus": 0}"""
+        """Test 4: loginStatus=0 时返回等待状态"""
         resp = _mock_response(200, {
             "code": 0,
             "data": {"loginStatus": 0, "scanPlatform": 0},
@@ -689,19 +689,33 @@ class TestQrPoll:
         with patch.object(pan.session, "get", return_value=resp):
             result = pan.qr_poll("uni-abc-123")
             assert result["loginStatus"] == 0
+            assert result["scanPlatform"] == 0
             assert "token" not in result
 
-    def test_qr_poll_confirmed_with_token(self, pan):
-        """Test 5: loginStatus=2 时返回包含 token 的 dict"""
+    def test_qr_poll_app_confirmed(self, pan):
+        """Test 5: code=200 时 App 扫码确认，返回 loginStatus=3 + token"""
         resp = _mock_response(200, {
-            "code": 0,
-            "data": {"loginStatus": 2, "token": "eyJhbGciOiJIUzI1NiJ9.test"},
+            "code": 200,
+            "data": {"login_type": 7, "token": "eyJhbGciOiJIUzI1NiJ9.test"},
         })
 
         with patch.object(pan.session, "get", return_value=resp):
             result = pan.qr_poll("uni-abc-123")
-            assert result["loginStatus"] == 2
+            assert result["loginStatus"] == 3
+            assert result["scanPlatform"] == 7
             assert result["token"] == "eyJhbGciOiJIUzI1NiJ9.test"
+
+    def test_qr_poll_wechat_confirmed(self, pan):
+        """Test 5b: code=200 时微信扫码确认，scanPlatform=4"""
+        resp = _mock_response(200, {
+            "code": 200,
+            "data": {"login_type": 4, "token": ""},
+        })
+
+        with patch.object(pan.session, "get", return_value=resp):
+            result = pan.qr_poll("uni-abc-123")
+            assert result["loginStatus"] == 3
+            assert result["scanPlatform"] == 4
 
     def test_qr_poll_network_error(self, pan):
         """Test 6: 网络异常时抛出 requests.RequestException"""

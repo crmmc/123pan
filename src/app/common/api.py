@@ -447,7 +447,13 @@ class Pan123:
         return {"uniID": data.get("uniID", ""), "url": data.get("url", "")}
 
     def qr_poll(self, uni_id):
-        """轮询二维码扫码状态。返回 dict 包含 loginStatus 和可能的 token。"""
+        """轮询二维码扫码状态。
+
+        返回 dict:
+        - loginStatus: 0=等待扫码, 1=已扫码待确认, 2=拒绝, 3=确认登录, 4=过期
+        - scanPlatform: 4=微信, 7=123云盘App (仅 code=200 时从 login_type 取)
+        - token: JWT token (仅 App 扫码确认时直接返回)
+        """
         headers = {
             "loginuuid": self.loginuuid,
             "app-version": "3",
@@ -463,17 +469,50 @@ class Pan123:
             )
         res_json = _parse_json_response(res)
         code = res_json.get("code", -1)
+        data = res_json.get("data", {})
+
+        # code=200 表示用户确认登录（前端映射为 loginStatus=3）
+        if code == 200:
+            return {
+                "loginStatus": 3,
+                "scanPlatform": data.get("login_type", 0),
+                "token": data.get("token", ""),
+            }
+
         if code != 0:
             raise RuntimeError(
                 f"轮询扫码状态失败: code={code}, "
                 f"message={res_json.get('message', '')}"
             )
+        return {
+            "loginStatus": data.get("loginStatus", -1),
+            "scanPlatform": data.get("scanPlatform", 0),
+        }
+
+    def qr_wx_code(self, uni_id):
+        """微信扫码登录：用 uniID 换取 wxCode，再用 wxCode 换 token。"""
+        headers = {
+            "loginuuid": self.loginuuid,
+            "app-version": "3",
+            "platform": "web",
+            "content-type": "application/json;charset=UTF-8",
+        }
+        with self._session_lock:
+            res = self.session.post(
+                "https://login.123pan.com/api/user/qr-code/wx_code",
+                headers=headers,
+                json={"uniID": uni_id},
+                timeout=10,
+            )
+        res_json = _parse_json_response(res)
+        code = res_json.get("code", -1)
+        if code != 0:
+            raise RuntimeError(
+                f"获取 wxCode 失败: code={code}, "
+                f"message={res_json.get('message', '')}"
+            )
         data = res_json.get("data", {})
-        result = {"loginStatus": data.get("loginStatus", -1)}
-        token = data.get("token")
-        if token:
-            result["token"] = token
-        return result
+        return data.get("wxCode", "")
 
     def file_details(self, file_ids):
         """获取文件/文件夹详情"""

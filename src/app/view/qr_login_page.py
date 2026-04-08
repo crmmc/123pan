@@ -52,7 +52,7 @@ class QRLoginPage(QWidget):
         layout.addSpacing(8)
 
         # 状态文字
-        self.status_label = QLabel("请使用 123云盘 App 扫码")
+        self.status_label = QLabel("请使用微信扫一扫")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("QLabel { font-size: 14px; }")
         layout.addWidget(self.status_label)
@@ -99,7 +99,11 @@ class QRLoginPage(QWidget):
         self._pan_temp = pan_temp
 
         # 生成二维码图片
-        qr_content = data["url"] + "?uniID=" + data["uniID"]
+        qr_content = (
+            data["url"]
+            + "?env=production&uniID=" + data["uniID"]
+            + "&source=123pan&type=login"
+        )
         qr_img = qrcode.make(qr_content, box_size=5, border=2)
         qt_image = ImageQt(qr_img.convert("RGB"))
         pixmap = QPixmap.fromImage(QImage(qt_image))
@@ -111,7 +115,7 @@ class QRLoginPage(QWidget):
             )
         )
 
-        self.status_label.setText("请使用 123云盘 App 扫码")
+        self.status_label.setText("请使用微信或 123云盘 App 扫码")
         self._consecutive_errors = 0
         self.poll_timer.start()
         self.expiry_timer.start(60000)
@@ -140,29 +144,68 @@ class QRLoginPage(QWidget):
         status = result.get("loginStatus", -1)
 
         if status == 0:
+            # 等待扫码
             return
         elif status == 1:
+            # 已扫码，待确认
             self.status_label.setText("扫码成功，请在手机上确认")
             self._show_scanned_overlay()
         elif status == 2:
+            # 用户拒绝登录
+            self.stop_polling()
+            self.status_label.setText("登录已取消")
+            self._show_expired_overlay()
+        elif status == 3:
+            # 用户确认登录
             self.stop_polling()
             self.status_label.setText("登录成功")
+            scan_platform = result.get("scanPlatform", 0)
             token = result.get("token", "")
+            self._handle_login_success(scan_platform, token)
+        elif status == 4:
+            # 二维码过期
+            self.stop_polling()
+            self.start_qr_flow()
+
+    def _handle_login_success(self, scan_platform, token):
+        """处理登录成功，根据扫码平台获取 token。"""
+        if scan_platform == 4 and not token:
+            # 微信扫码：需要额外请求 wx_code 换取 token
             try:
-                pan = Pan123(
-                    readfile=True, user_name="", password="",
-                    authorization="Bearer " + token,
-                )
-                user_data = pan.user_info()
-                if user_data is None:
-                    self.status_label.setText("登录验证失败，请重试")
-                    self._show_expired_overlay()
-                    return
-                self.loginSuccess.emit(pan)
+                wx_code = self._pan_temp.qr_wx_code(self._uni_id)
+                # TODO: wxCode 换 token 的流程待确认具体 API
+                # 目前 API 文档未提供 wxCode → token 的完整接口
+                logger.warning(f"微信扫码登录获取 wxCode: {wx_code}")
+                self.status_label.setText("微信登录暂不支持，请使用 123云盘 App 扫码")
+                self._show_expired_overlay()
+                return
             except Exception as e:
-                logger.error(f"QR 登录验证失败: {e}")
+                logger.error(f"获取 wxCode 失败: {e}")
+                self.status_label.setText("登录失败，请重试")
+                self._show_expired_overlay()
+                return
+
+        # App 扫码（scanPlatform=7）或已有 token
+        if not token:
+            self.status_label.setText("登录失败：未获取到凭证")
+            self._show_expired_overlay()
+            return
+
+        try:
+            pan = Pan123(
+                readfile=True, user_name="", password="",
+                authorization="Bearer " + token,
+            )
+            user_data = pan.user_info()
+            if user_data is None:
                 self.status_label.setText("登录验证失败，请重试")
                 self._show_expired_overlay()
+                return
+            self.loginSuccess.emit(pan)
+        except Exception as e:
+            logger.error(f"QR 登录验证失败: {e}")
+            self.status_label.setText("登录验证失败，请重试")
+            self._show_expired_overlay()
 
     def _on_expired(self):
         """二维码过期，自动刷新。"""
