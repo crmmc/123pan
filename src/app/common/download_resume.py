@@ -10,6 +10,10 @@ from pathlib import Path
 import requests
 
 from .config import CONFIG_DIR
+from .concurrency import (
+    RATE_LIMIT_CODES, MAX_RATE_LIMITS, RATE_LIMIT_BACKOFF,
+    MAX_PART_RETRIES, PROGRESS_INTERVAL, slow_start_scheduler,
+)
 from .database import Database, get_download_part_size
 from .log import get_logger
 
@@ -17,13 +21,8 @@ logger = get_logger(__name__)
 
 PART_SIZE = 5 * 1024 * 1024  # 默认值，运行时由 get_download_part_size() 覆盖
 MIN_PARALLEL_SIZE = 2 * 1024 * 1024
-MAX_RATE_LIMITS = 50
 IO_CHUNK_SIZE = 1024 * 1024
-MAX_PART_HTTP_RETRIES = 3
 MAX_PART_QUEUE_ATTEMPTS = 3
-PROGRESS_UPDATE_INTERVAL = 0.1
-RATE_LIMIT_BACKOFF_SECONDS = 2
-WORKER_SPAWN_INTERVAL = 0.3
 DEFAULT_MAX_DOWNLOAD_THREADS = 1
 
 
@@ -256,7 +255,7 @@ def _download_part(
     queue_attempt = int(part.get("attempt", 0))
     io_chunk_size = min(IO_CHUNK_SIZE, max(8192, int(part["expected_size"] / 100) or 8192))
 
-    while retry_count < MAX_PART_HTTP_RETRIES:
+    while retry_count < MAX_PART_RETRIES:
         attempt_downloaded = 0
         stop_result = _get_stop_result(task)
         if stop_result:
@@ -264,7 +263,7 @@ def _download_part(
         try:
             md5 = hashlib.md5()
             with requests.get(redirect_url, headers=headers, stream=True, timeout=60) as resp:
-                if resp.status_code == 429:
+                if resp.status_code in RATE_LIMIT_CODES:
                     return "rate_limited"
                 resp.raise_for_status()
                 with open(part_path, "wb") as f:
@@ -286,7 +285,7 @@ def _download_part(
                             now = time.time()
                             if speed_tracker:
                                 speed_tracker.record(downloaded[0])
-                            if now - last_progress_time[0] > PROGRESS_UPDATE_INTERVAL:
+                            if now - last_progress_time[0] > PROGRESS_INTERVAL:
                                 _notify_progress(signals, total, downloaded[0])
                                 last_progress_time[0] = now
             actual_size = part_path.stat().st_size
@@ -305,7 +304,7 @@ def _download_part(
                 attempt_downloaded, signals, total, resume_id, index,
             )
             retry_count += 1
-            if retry_count >= MAX_PART_HTTP_RETRIES:
+            if retry_count >= MAX_PART_RETRIES:
                 queue_attempt += 1
                 part["attempt"] = queue_attempt
                 if queue_attempt >= MAX_PART_QUEUE_ATTEMPTS:
@@ -338,12 +337,16 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
         16,
     )
     active_workers = [0]
-    allowed_workers = [max_workers]
+    allowed_workers = [1]
     failed = [False]
     rate_limit_count = [0]
     downloaded = [reused_bytes]
     progress_lock = threading.Lock()
     last_progress_time = [0.0]
+    probe_phase = [True]
+    probe_failed = [False]
+    probe_success_count = [0]
+    worker_feedback = threading.Event()
 
     if speed_tracker and reused_bytes:
         speed_tracker.record(reused_bytes)
@@ -371,6 +374,9 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
                 )
                 if result == "ok":
                     _save_download_status(resume_id, total, downloaded[0], "下载中")
+                    with progress_lock:
+                        probe_success_count[0] += 1
+                    worker_feedback.set()
                     continue
                 if result in ("cancelled", "paused"):
                     return
@@ -383,37 +389,49 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
                         new_limit = max(1, active_workers[0] - 1)
                         if new_limit < allowed_workers[0]:
                             allowed_workers[0] = new_limit
+                        if probe_phase[0]:
+                            probe_failed[0] = True
+                            probe_phase[0] = False
                         _notify_conn_info(signals, active_workers[0], allowed_workers[0])
                     part_queue.put(part)
-                    time.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+                    worker_feedback.set()
+                    time.sleep(RATE_LIMIT_BACKOFF)
                     continue
                 if result == "retryable":
                     part_queue.put(part)
                     continue
+                with progress_lock:
+                    if probe_phase[0]:
+                        probe_failed[0] = True
+                        probe_phase[0] = False
+                worker_feedback.set()
                 failed[0] = True
                 return
         finally:
             with progress_lock:
                 active_workers[0] -= 1
                 _notify_conn_info(signals, active_workers[0], allowed_workers[0])
+            worker_feedback.set()
 
-    threads = []
     _save_download_status(resume_id, total, reused_bytes, "下载中")
     _notify_status(signals, "下载中")
-    for i in range(max_workers):
-        if part_queue.empty() or failed[0] or _get_stop_result(task):
-            break
-        t = threading.Thread(target=worker, name=f"dl_worker_{i}", daemon=True)
-        threads.append(t)
-        t.start()
-        if i < max_workers - 1 and not part_queue.empty():
-            time.sleep(WORKER_SPAWN_INTERVAL)
-            with progress_lock:
-                if i + 1 >= allowed_workers[0]:
-                    break
 
-    for t in threads:
-        t.join()
+    slow_start_scheduler(
+        worker_fn=worker,
+        max_workers=max_workers,
+        part_queue=part_queue,
+        progress_lock=progress_lock,
+        active_workers=active_workers,
+        allowed_workers=allowed_workers,
+        failed=failed,
+        probe_failed=probe_failed,
+        probe_success_count=probe_success_count,
+        probe_phase=probe_phase,
+        worker_feedback=worker_feedback,
+        is_stopped_fn=lambda: bool(_get_stop_result(task)),
+        notify_conn_fn=lambda a, al: _notify_conn_info(signals, a, al),
+        thread_prefix="dl_worker",
+    )
 
     _notify_conn_info(signals, 0, allowed_workers[0])
     _notify_progress(signals, total, downloaded[0])
@@ -520,7 +538,7 @@ def _download_single_stream(redirect_url, out_path, total, signals, task, speed_
                 if speed_tracker:
                     speed_tracker.record(done)
                 now = time.time()
-                if now - last_t > PROGRESS_UPDATE_INTERVAL:
+                if now - last_t > PROGRESS_INTERVAL:
                     _notify_progress(signals, total, done)
                     last_t = now
     _notify_progress(signals, total, done)

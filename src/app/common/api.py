@@ -16,6 +16,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .database import Database, UPLOAD_PART_SIZE, _safe_int, get_upload_part_size
+from .concurrency import (
+    RATE_LIMIT_CODES, MAX_RATE_LIMITS, RATE_LIMIT_BACKOFF,
+    MAX_PART_RETRIES, PROGRESS_INTERVAL, slow_start_scheduler,
+)
 from .const import all_device_type, all_os_versions
 from .log import get_logger
 
@@ -951,17 +955,16 @@ class Pan123:
 
         logger.debug("上传任务并发上限: %s, 分块数: %s, 已完成: %s", max_workers, total_parts, len(done_parts))
         active_workers = [0]
-        allowed_workers = [max_workers]
+        allowed_workers = [1]
         failed = [False]
         uploaded = [done_bytes]
         rate_limit_count = [0]
         progress_lock = threading.Lock()
         last_progress_time = [0.0]
-        _PROGRESS_INTERVAL = 0.1
-        _MAX_RETRIES = 3
-        _MAX_RATE_LIMITS = 50
-        _RATE_LIMIT_BACKOFF = 2
-        _WORKER_SPAWN_INTERVAL = 0.3
+        probe_phase = [True]
+        probe_failed = [False]
+        probe_success_count = [0]
+        worker_feedback = threading.Event()
 
         # 续传时立即发送已有进度
         if done_bytes > 0 and signals and fsize:
@@ -1015,7 +1018,7 @@ class Pan123:
                     )
 
                     retry = 0
-                    while retry < _MAX_RETRIES:
+                    while retry < MAX_PART_RETRIES:
                         if _is_stopped():
                             logger.debug("分块 %s 上传中停止", pn)
                             return
@@ -1051,27 +1054,32 @@ class Pan123:
                                 f.seek(offset)
                                 block = f.read(size)
                             resp = requests.put(url, data=block, timeout=60)
-                            if resp.status_code == 429:
+                            if resp.status_code in RATE_LIMIT_CODES:
                                 with progress_lock:
                                     rate_limit_count[0] += 1
-                                    if rate_limit_count[0] > _MAX_RATE_LIMITS:
+                                    if rate_limit_count[0] > MAX_RATE_LIMITS:
                                         failed[0] = True
-                                        logger.error("429 次数过多，上传终止")
+                                        logger.error("限流次数过多，上传终止")
                                         return
                                     new_limit = max(1, active_workers[0] - 1)
                                     if new_limit < allowed_workers[0]:
                                         allowed_workers[0] = new_limit
+                                    if probe_phase[0]:
+                                        probe_failed[0] = True
+                                        probe_phase[0] = False
                                     if signals and hasattr(signals, "conn_info"):
                                         signals.conn_info.emit(
                                             active_workers[0], allowed_workers[0]
                                         )
                                 part_queue.put(part)
+                                worker_feedback.set()
                                 logger.debug(
-                                    "分块 %s 命中 429，回队，allowed=%s",
+                                    "分块 %s 命中 %s，回队，allowed=%s",
                                     pn,
+                                    resp.status_code,
                                     allowed_workers[0],
                                 )
-                                time.sleep(_RATE_LIMIT_BACKOFF)
+                                time.sleep(RATE_LIMIT_BACKOFF)
                                 break
                             resp.raise_for_status()
                             part_etag = resp.headers.get("ETag", "")
@@ -1081,23 +1089,50 @@ class Pan123:
                                 if speed_tracker:
                                     speed_tracker.record(uploaded[0])
                                 if signals and fsize:
-                                    if now - last_progress_time[0] > _PROGRESS_INTERVAL:
+                                    if now - last_progress_time[0] > PROGRESS_INTERVAL:
                                         signals.progress.emit(
                                             int(uploaded[0] * 100 / fsize)
                                         )
                                         last_progress_time[0] = now
                             if signals and hasattr(signals, "part_done"):
                                 signals.part_done.emit(pn, part_etag)
+                            with progress_lock:
+                                probe_success_count[0] += 1
+                            worker_feedback.set()
                             logger.debug("分块 %s 上传成功", pn)
                             break
                         except requests.RequestException as exc:
+                            is_conn_err = isinstance(exc, requests.ConnectionError)
+                            if is_conn_err:
+                                with progress_lock:
+                                    rate_limit_count[0] += 1
+                                    if rate_limit_count[0] > MAX_RATE_LIMITS:
+                                        failed[0] = True
+                                        logger.error("连接错误次数过多，上传终止")
+                                        return
+                                    new_limit = max(1, active_workers[0] - 1)
+                                    if new_limit < allowed_workers[0]:
+                                        allowed_workers[0] = new_limit
+                                        logger.info(
+                                            "连接被重置，降低并发至 %s",
+                                            allowed_workers[0],
+                                        )
+                                    if signals and hasattr(signals, "conn_info"):
+                                        signals.conn_info.emit(
+                                            active_workers[0], allowed_workers[0]
+                                        )
                             retry += 1
-                            if retry >= _MAX_RETRIES:
+                            if retry >= MAX_PART_RETRIES:
                                 logger.error(
                                     "分块 %s 上传失败（已重试 %s 次）: %s",
                                     pn, retry, exc,
                                 )
+                                with progress_lock:
+                                    if probe_phase[0]:
+                                        probe_failed[0] = True
+                                        probe_phase[0] = False
                                 failed[0] = True
+                                worker_feedback.set()
                                 return
                             logger.warning(
                                 "分块 %s 第 %s 次重试: %s", pn, retry, exc
@@ -1110,43 +1145,29 @@ class Pan123:
                         signals.conn_info.emit(
                             active_workers[0], allowed_workers[0]
                         )
+                worker_feedback.set()
                 logger.debug("上传 worker 退出: active=%s", active_workers[0])
 
-        threads = []
-        for i in range(max_workers):
-            if part_queue.empty() or failed[0]:
-                logger.debug("上传线程启动终止: queue_empty=%s, failed=%s", part_queue.empty(), failed[0])
-                break
-            if _is_stopped():
-                logger.debug("上传线程启动因任务停止终止")
-                break
-            t = threading.Thread(
-                target=_upload_worker,
-                name=f"upload_worker_{i}",
-                daemon=True,
-            )
-            threads.append(t)
-            t.start()
-            logger.debug(
-                "启动上传 worker %s/%s, allowed=%s",
-                i + 1,
-                max_workers,
-                allowed_workers[0],
-            )
-            if i < max_workers - 1 and not part_queue.empty():
-                time.sleep(_WORKER_SPAWN_INTERVAL)
-                with progress_lock:
-                    if i + 1 >= allowed_workers[0]:
-                        logger.debug(
-                            "上传线程启动因 allowed_workers 限制停止: started=%s, allowed=%s",
-                            i + 1,
-                            allowed_workers[0],
-                        )
-                        break
+        def _notify_conn(active, allowed):
+            if signals and hasattr(signals, "conn_info"):
+                signals.conn_info.emit(active, allowed)
 
-        logger.debug("上传线程全部启动完成: 共 %s 个", len(threads))
-        for t in threads:
-            t.join()
+        slow_start_scheduler(
+            worker_fn=_upload_worker,
+            max_workers=max_workers,
+            part_queue=part_queue,
+            progress_lock=progress_lock,
+            active_workers=active_workers,
+            allowed_workers=allowed_workers,
+            failed=failed,
+            probe_failed=probe_failed,
+            probe_success_count=probe_success_count,
+            probe_phase=probe_phase,
+            worker_feedback=worker_feedback,
+            is_stopped_fn=_is_stopped,
+            notify_conn_fn=_notify_conn,
+            thread_prefix="upload_worker",
+        )
 
         logger.debug(
             "上传线程全部退出: uploaded=%s/%s, failed=%s",
