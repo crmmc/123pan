@@ -33,6 +33,8 @@ def main():
     setTheme(Theme.LIGHT)
 
     window = MainWindow()
+    if not window.login_success:
+        sys.exit(0)
     window.show()
     sys.exit(app.exec())
 

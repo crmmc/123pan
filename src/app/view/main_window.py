@@ -26,6 +26,7 @@ class MainWindow(FluentWindow):
         self.setWindowTitle("123pan")
         self.resize(900, 600)
         self._last_file_refresh_time = 0.0
+        self.login_success = False
 
         # 初始化子页面
         self.file_interface = FileInterface(self)
@@ -78,9 +79,10 @@ class MainWindow(FluentWindow):
         if self.pan is None:
             dlg = LoginDialog(self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
-                QTimer.singleShot(0, self.close)
                 return
             self.pan = dlg.get_pan()
+
+        self.login_success = True
 
         # 将 pan 对象传递给 file_interface 并刷新文件列表
         self.file_interface.pan = self.pan
@@ -120,7 +122,6 @@ class MainWindow(FluentWindow):
         for key in ("userName", "passWord", "authorization", "deviceType", "osVersion", "loginuuid"):
             db.set_config(key, "")
         db.set_config("rememberPassword", False)
-        db.set_config("stayLoggedIn", False)
 
     def handle_logout(self):
         """处理退出登录请求"""

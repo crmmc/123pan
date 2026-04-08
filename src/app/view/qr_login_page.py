@@ -201,6 +201,7 @@ class QRLoginPage(QWidget):
                 self.status_label.setText("登录验证失败，请重试")
                 self._show_expired_overlay()
                 return
+            pan.user_name = user_data.get("Nickname", "")
             self.loginSuccess.emit(pan)
         except Exception as e:
             logger.error(f"QR 登录验证失败: {e}")

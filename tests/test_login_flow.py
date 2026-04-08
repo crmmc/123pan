@@ -128,6 +128,7 @@ class TestQRLoginSuccess:
         dialog.cb_stay_logged_in.setChecked(True)
         mock_pan = MagicMock()
         mock_pan.authorization = "Bearer test-jwt"
+        mock_pan.user_name = "test-user"
         mock_pan.devicetype = "test-device"
         mock_pan.osversion = "test-os"
         mock_pan.loginuuid = "test-uuid"
@@ -135,6 +136,7 @@ class TestQRLoginSuccess:
         with patch.object(dialog, "accept"):
             dialog._on_qr_login_success(mock_pan)
         assert db.get_config("authorization", "") == "Bearer test-jwt"
+        assert db.get_config("userName", "") == "test-user"
         assert dialog.pan is mock_pan
 
     def test_clears_token_when_stay_logged_in_unchecked(self, tmp_path, monkeypatch):
@@ -142,6 +144,7 @@ class TestQRLoginSuccess:
         dialog.cb_stay_logged_in.setChecked(False)
         mock_pan = MagicMock()
         mock_pan.authorization = "Bearer test-jwt"
+        mock_pan.user_name = "test-user"
         mock_pan.devicetype = "test-device"
         mock_pan.osversion = "test-os"
         mock_pan.loginuuid = "test-uuid"

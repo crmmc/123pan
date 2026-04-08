@@ -155,7 +155,7 @@ class LoginDialog(QDialog):
         self.le_user.setText(db.get_config("userName", ""))
         self.le_pass.setText(db.get_config("passWord", ""))
         self.cb_remember_password.setChecked(bool(db.get_config("rememberPassword", False)))
-        self.cb_stay_logged_in.setChecked(bool(db.get_config("stayLoggedIn", True)))
+        self.cb_stay_logged_in.setChecked(True)
         self.cb_remember_password.stateChanged.connect(self._on_remember_password_changed)
 
     def _on_remember_password_changed(self, state):
@@ -175,6 +175,7 @@ class LoginDialog(QDialog):
         self.pan = pan_object
         try:
             db = Database.instance()
+            db.set_config("userName", pan_object.user_name)
             if self.cb_stay_logged_in.isChecked():
                 db.set_config("authorization", pan_object.authorization)
             else:
