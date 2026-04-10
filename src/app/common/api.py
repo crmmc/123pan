@@ -181,13 +181,13 @@ class Pan123:
     def _login_without_lock(self):
         """登录123云盘账户并获取授权令牌"""
         data = {"type": 1, "passport": self.user_name, "password": self.password}
-        with self._session_lock:
-            login_res = self.session.post(
-                "https://www.123pan.com/b/api/user/sign_in",
-                headers=self.header_logined,
-                data=json.dumps(data),
-                timeout=(3, 5),
-            )
+        login_res = self._raw_request(
+            self.session.post,
+            "https://www.123pan.com/b/api/user/sign_in",
+            headers=self.header_logined,
+            data=json.dumps(data),
+            timeout=(3, 5),
+        )
 
         res_sign = _parse_json_response(login_res)
         res_code_login = res_sign.get("code", -1)
@@ -231,17 +231,21 @@ class Pan123:
         if login_code not in (0, 200):
             raise RuntimeError(f"token 刷新失败: {login_code}")
 
+    def _raw_request(self, method, url, **kwargs):
+        """基础请求包装：_session_lock + 限流检测。"""
+        with self._session_lock:
+            response = method(url, **kwargs)
+        if response.status_code in RATE_LIMIT_CODES:
+            raise RateLimitError(f"API 返回 {response.status_code} 限流: {url}")
+        return response
+
     def _api_request(self, method, url, max_token_refreshes=1, **kwargs):
         token_refreshes = 0
         while True:
             request_kwargs = self._prepare_request_kwargs(kwargs)
             request_headers = request_kwargs.get("headers", {})
             request_authorization = request_headers.get("authorization")
-            with self._session_lock:
-                response = method(url, **request_kwargs)
-            # 统一检测 429
-            if response.status_code == 429:
-                raise RateLimitError(f"API 返回 429 限流: {url}")
+            response = self._raw_request(method, url, **request_kwargs)
             try:
                 response_json = response.json()
             except ValueError:
@@ -378,10 +382,9 @@ class Pan123:
         if not down_load_url:
             logger.error("响应中缺少 DownloadUrl")
             return -1
-        with self._session_lock:
-            next_to_get = self.session.get(
-                down_load_url, timeout=10, allow_redirects=False
-            ).text
+        next_to_get = self._raw_request(
+            self.session.get, down_load_url, timeout=10, allow_redirects=False
+        ).text
         url_pattern = re.compile(r"""href=["'](https?://[^"']+)["']""")
         matches = url_pattern.findall(next_to_get)
         if not matches:
@@ -512,12 +515,12 @@ class Pan123:
             "platform": "web",
             "content-type": "application/json;charset=UTF-8",
         }
-        with self._session_lock:
-            res = self.session.get(
-                "https://login.123pan.com/api/user/qr-code/generate",
-                headers=headers,
-                timeout=10,
-            )
+        res = self._raw_request(
+            self.session.get,
+            "https://login.123pan.com/api/user/qr-code/generate",
+            headers=headers,
+            timeout=10,
+        )
         res_json = _parse_json_response(res)
         code = res_json.get("code", -1)
         if code != 0:
@@ -542,13 +545,13 @@ class Pan123:
             "platform": "web",
             "content-type": "application/json;charset=UTF-8",
         }
-        with self._session_lock:
-            res = self.session.get(
-                "https://login.123pan.com/api/user/qr-code/result",
-                headers=headers,
-                params={"uniID": uni_id},
-                timeout=10,
-            )
+        res = self._raw_request(
+            self.session.get,
+            "https://login.123pan.com/api/user/qr-code/result",
+            headers=headers,
+            params={"uniID": uni_id},
+            timeout=10,
+        )
         res_json = _parse_json_response(res)
         code = res_json.get("code", -1)
         data = res_json.get("data", {})
@@ -579,13 +582,13 @@ class Pan123:
             "platform": "web",
             "content-type": "application/json;charset=UTF-8",
         }
-        with self._session_lock:
-            res = self.session.post(
-                "https://login.123pan.com/api/user/qr-code/wx_code",
-                headers=headers,
-                json={"uniID": uni_id},
-                timeout=10,
-            )
+        res = self._raw_request(
+            self.session.post,
+            "https://login.123pan.com/api/user/qr-code/wx_code",
+            headers=headers,
+            json={"uniID": uni_id},
+            timeout=10,
+        )
         res_json = _parse_json_response(res)
         code = res_json.get("code", -1)
         if code != 0:

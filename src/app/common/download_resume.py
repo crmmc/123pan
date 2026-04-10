@@ -235,12 +235,16 @@ def _probe_download(redirect_url):
     accept_ranges = False
     try:
         head = requests.head(redirect_url, allow_redirects=True, timeout=30)
+        if head.status_code in RATE_LIMIT_CODES:
+            return 0, False
         head.raise_for_status()
         total = int(head.headers.get("Content-Length", 0) or 0)
         accept_ranges = head.headers.get("Accept-Ranges", "").lower() == "bytes"
     except requests.RequestException:
         try:
             with requests.get(redirect_url, stream=True, timeout=30) as r:
+                if r.status_code in RATE_LIMIT_CODES:
+                    return 0, False
                 r.raise_for_status()
                 total = int(r.headers.get("Content-Length", 0) or 0)
                 accept_ranges = r.headers.get("Accept-Ranges", "").lower() == "bytes"
@@ -553,6 +557,8 @@ def _download_single_stream(redirect_url, out_path, total, signals, task, speed_
     _notify_status(signals, "下载中")
     try:
         with requests.get(redirect_url, stream=True, timeout=30) as response:
+            if response.status_code in RATE_LIMIT_CODES:
+                return "rate_limited"
             response.raise_for_status()
             done = 0
             last_t = 0.0
