@@ -1,6 +1,10 @@
 """上传/下载共用的并发控制常量与慢启动调度工具。"""
 import threading
 
+from .log import get_logger
+
+logger = get_logger(__name__)
+
 # ---- 并发控制常量 ----
 RATE_LIMIT_CODES = frozenset({429, 503})
 MAX_RATE_LIMITS = 50
@@ -31,6 +35,7 @@ def slow_start_scheduler(
     threads.append(t)
     t.start()
     notify_conn_fn(1, 1)
+    logger.debug("[调度器] 启动首个 probe: %s", t.name)
 
     # 事件驱动监控循环
     while True:
@@ -54,6 +59,7 @@ def slow_start_scheduler(
             threads.append(t)
             t.start()
             active += 1
+            logger.debug("[调度器] 补充 worker: active=%s, allowed=%s", active, allowed)
 
         # 2. 尝试启动 probe（无 probe + 未到上限 + 队列有活）
         with progress_lock:
@@ -69,6 +75,7 @@ def slow_start_scheduler(
             with progress_lock:
                 probe_thread_name[0] = t.name
             t.start()
+            logger.debug("[调度器] 启动 probe: %s, allowed=%s/%s", t.name, allowed_workers[0], max_workers)
 
         # 3. 完成 / 安全网
         with progress_lock:
@@ -82,6 +89,8 @@ def slow_start_scheduler(
                 )
                 threads.append(t)
                 t.start()
+                logger.debug("[调度器] 安全网触发: 无活跃 worker 但队列非空")
 
     for t in threads:
         t.join()
+    logger.debug("[调度器] 调度结束, 共创建 %s 线程", len(threads))

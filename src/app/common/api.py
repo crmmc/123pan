@@ -923,6 +923,7 @@ class Pan123:
         speed_tracker=None, resume_info=None, parent_id=0,
     ):
         """上传文件（分块），支持断点续传、progress 回调与取消/暂停控制。"""
+        tid = uuid.uuid4().hex[:6]
         file_path = file_path.replace('"', "").replace("\\", "/")
         file_path_obj = Path(file_path)
         file_name = file_path_obj.name
@@ -931,6 +932,7 @@ class Pan123:
         if file_path_obj.is_dir():
             raise IsADirectoryError("不支持文件夹上传")
         fsize = file_path_obj.stat().st_size
+        logger.debug("[T-%s] 开始上传: file=%s, size=%s", tid, file_name, fsize)
         headers = self.header_logined.copy()
         readable_hash = None
 
@@ -1010,7 +1012,7 @@ class Pan123:
                 done_parts = set()
 
             logger.info(
-                "断点续传: %s/%s 块已完成", len(done_parts), total_parts
+                "[T-%s] 断点续传: done=%s/%s", tid, len(done_parts), total_parts
             )
             if signals and hasattr(signals, "status"):
                 signals.status.emit("上传中")
@@ -1019,6 +1021,7 @@ class Pan123:
             if readable_hash is None:
                 if signals and hasattr(signals, "status"):
                     signals.status.emit("校验中")
+                logger.debug("[T-%s] MD5 校验开始", tid)
                 stop_state, readable_hash = _calculate_file_md5(
                     file_path,
                     fsize,
@@ -1028,6 +1031,7 @@ class Pan123:
                 )
                 if stop_state:
                     return stop_state
+                logger.debug("[T-%s] MD5 校验完成: etag=%s", tid, readable_hash)
 
             list_up_request = {
                 "driveId": 0,
@@ -1039,6 +1043,7 @@ class Pan123:
                 "duplicate": 0,
             }
             url = "https://www.123pan.com/b/api/file/upload_request"
+            logger.debug("[T-%s] upload_request 发送, etag=%s", tid, readable_hash)
             res = self._api_request(
                 self.session.post,
                 url,
@@ -1065,6 +1070,7 @@ class Pan123:
                 )
             data = res_json.get("data") or {}
             if data.get("Reuse"):
+                logger.debug("[T-%s] 秒传成功", tid)
                 return "复用上传成功"
             bucket = data.get("Bucket", "")
             storage_node = data.get("StorageNode", "")
@@ -1112,6 +1118,7 @@ class Pan123:
             raise RuntimeError(
                 "初始化上传会话失败: " + json.dumps(init_json, ensure_ascii=False)
             )
+        logger.debug("[T-%s] S3 session 初始化完成", tid)
 
         # 构建分块任务队列（跳过已完成的块）
         part_queue = queue.Queue()
@@ -1138,6 +1145,7 @@ class Pan123:
             max_workers = 1
 
         logger.debug("上传任务并发上限: %s, 分块数: %s, 已完成: %s", max_workers, total_parts, len(done_parts))
+        logger.debug("[T-%s] 分块上传开始: parts=%s, workers=%s", tid, total_parts, max_workers)
         active_workers = [0]
         allowed_workers = [1]
         failed = [False]
@@ -1164,6 +1172,7 @@ class Pan123:
             return False
 
         def _upload_worker():
+            wid = uuid.uuid4().hex[:4]
             max_retries = _safe_int(
                 Database.instance().get_config("retryMaxAttempts", 3), 3, 0, 5
             )
@@ -1172,18 +1181,19 @@ class Pan123:
                 active_workers[0] += 1
                 if signals and hasattr(signals, "conn_info"):
                     signals.conn_info.emit(active_workers[0], max_workers)
-            logger.debug("上传 worker 启动: active=%s", active_workers[0])
+            logger.debug("[T-%s W-%s] 启动: active=%s", tid, wid, active_workers[0])
 
             try:
                 while not failed[0]:
                     if _is_stopped():
-                        logger.debug("上传 worker 因任务停止退出")
+                        logger.debug("[T-%s W-%s] 因任务停止退出", tid, wid)
                         return
                     with progress_lock:
                         is_probe = threading.current_thread().name == probe_thread_name[0]
                         if not is_probe and active_workers[0] > allowed_workers[0] and active_workers[0] > 1:
                             logger.debug(
-                                "上传 worker 为满足并发上限退出: active=%s, allowed=%s",
+                                "[T-%s W-%s] 超出并发上限退出: active=%s, allowed=%s",
+                                tid, wid,
                                 active_workers[0],
                                 allowed_workers[0],
                             )
@@ -1191,7 +1201,7 @@ class Pan123:
                     try:
                         part = part_queue.get_nowait()
                     except queue.Empty:
-                        logger.debug("上传 worker 发现队列为空，退出")
+                        logger.debug("[T-%s W-%s] 队列为空，退出", tid, wid)
                         return
 
                     pn = part["part_number"]
@@ -1199,16 +1209,15 @@ class Pan123:
                     size = part["size"]
 
                     logger.debug(
-                        "上传 worker 获取分块 %s，剩余队列=%s",
-                        pn,
-                        part_queue.qsize(),
+                        "[T-%s W-%s] 获取分块 %s, 队列剩余=%s",
+                        tid, wid, pn, part_queue.qsize(),
                     )
 
                     attempt = 0
                     while True:
                         progress_io = None
                         if _is_stopped():
-                            logger.debug("分块 %s 上传中停止", pn)
+                            logger.debug("[T-%s W-%s] 分块 %s 上传中停止", tid, wid, pn)
                             return
                         try:
                             # 逐块获取 presigned URL（避免批量获取导致 URL 过期）
@@ -1251,6 +1260,7 @@ class Pan123:
                                             if allowed_workers[0] < max_workers:
                                                 allowed_workers[0] += 1
                                     probe_promoted = True
+                                    logger.debug("[T-%s W-%s] probe 转正, allowed=%s", tid, wid, allowed_workers[0])
                                     worker_feedback.set()
                                 with progress_lock:
                                     uploaded[0] += n
@@ -1272,7 +1282,7 @@ class Pan123:
                                     transient_failure_count[0] += 1
                                     if transient_failure_count[0] > MAX_RATE_LIMITS:
                                         failed[0] = True
-                                        logger.error("限流次数过多，上传终止")
+                                        logger.error("[T-%s W-%s] 限流次数过多，上传终止", tid, wid)
                                         return
                                     if threading.current_thread().name == probe_thread_name[0]:
                                         probe_thread_name[0] = None
@@ -1283,10 +1293,8 @@ class Pan123:
                                 part_queue.put(part)
                                 worker_feedback.set()
                                 logger.debug(
-                                    "分块 %s 命中 %s，回队，allowed=%s",
-                                    pn,
-                                    resp.status_code,
-                                    allowed_workers[0],
+                                    "[T-%s W-%s] 分块 %s 命中 %s，回队，allowed=%s",
+                                    tid, wid, pn, resp.status_code, allowed_workers[0],
                                 )
                                 time.sleep(RATE_LIMIT_BACKOFF)
                                 break
@@ -1297,7 +1305,7 @@ class Pan123:
                             with progress_lock:
                                 _reset_transient_failure_count(transient_failure_count)
                             worker_feedback.set()
-                            logger.debug("分块 %s 上传成功", pn)
+                            logger.debug("[T-%s W-%s] 分块 %s 上传成功", tid, wid, pn)
                             break
                         except Exception as exc:
                             if progress_io is not None and progress_io.reported > 0:
@@ -1310,7 +1318,7 @@ class Pan123:
                                     transient_failure_count[0] += 1
                                     if transient_failure_count[0] > MAX_RATE_LIMITS:
                                         failed[0] = True
-                                        logger.error("限流次数过多，上传终止")
+                                        logger.error("[T-%s W-%s] 限流次数过多，上传终止", tid, wid)
                                         return
                                     if threading.current_thread().name == probe_thread_name[0]:
                                         probe_thread_name[0] = None
@@ -1321,8 +1329,8 @@ class Pan123:
                                 part_queue.put(part)
                                 worker_feedback.set()
                                 logger.warning(
-                                    "分块 %s 获取上传链接触发限流，回队重试: %s",
-                                    pn, exc,
+                                    "[T-%s W-%s] 分块 %s 获取上传链接触发限流，回队重试: %s",
+                                    tid, wid, pn, exc,
                                 )
                                 time.sleep(RATE_LIMIT_BACKOFF)
                                 break
@@ -1332,33 +1340,33 @@ class Pan123:
                                         transient_failure_count[0] += 1
                                         if transient_failure_count[0] > MAX_RATE_LIMITS:
                                             failed[0] = True
-                                            logger.error("连接错误次数过多，上传终止")
+                                            logger.error("[T-%s W-%s] 连接错误次数过多，上传终止", tid, wid)
                                             return
                                         if threading.current_thread().name == probe_thread_name[0]:
                                             probe_thread_name[0] = None
                                         else:
                                             allowed_workers[0] = max(1, allowed_workers[0] - 1)
-                                        logger.info(
-                                            "连接被重置，降低并发至 %s",
-                                            allowed_workers[0],
+                                        logger.debug(
+                                            "[T-%s W-%s] 连接被重置，降低并发至 %s",
+                                            tid, wid, allowed_workers[0],
                                         )
                                     part_queue.put(part)
                                     worker_feedback.set()
                                     logger.warning(
-                                        "分块 %s 重试 %s 次仍失败，回队: %s",
-                                        pn, attempt, exc,
+                                        "[T-%s W-%s] 分块 %s 重试 %s 次仍失败，回队: %s",
+                                        tid, wid, pn, attempt, exc,
                                     )
                                     return  # worker 退出，调度器补充新 worker
                                 logger.error(
-                                    "分块 %s 上传失败（已重试 %s 次）: %s",
-                                    pn, attempt, exc,
+                                    "[T-%s W-%s] 分块 %s 上传失败（已重试 %s 次）: %s",
+                                    tid, wid, pn, attempt, exc,
                                 )
                                 failed[0] = True
                                 worker_feedback.set()
                                 return
                             attempt += 1
                             logger.warning(
-                                "分块 %s 第 %s 次重试: %s", pn, attempt, exc
+                                "[T-%s W-%s] 分块 %s 第 %s 次重试: %s", tid, wid, pn, attempt, exc
                             )
                             time.sleep(attempt)
             finally:
@@ -1371,7 +1379,7 @@ class Pan123:
                             active_workers[0], max_workers
                         )
                 worker_feedback.set()
-                logger.debug("上传 worker 退出: active=%s", active_workers[0])
+                logger.debug("[T-%s W-%s] 退出: active=%s", tid, wid, active_workers[0])
 
         def _notify_conn(active, _allowed):
             if signals and hasattr(signals, "conn_info"):
@@ -1393,7 +1401,8 @@ class Pan123:
         )
 
         logger.debug(
-            "上传线程全部退出: uploaded=%s/%s, failed=%s",
+            "[T-%s] 分块上传结束: uploaded=%s/%s, failed=%s",
+            tid,
             uploaded[0],
             fsize,
             failed[0],
@@ -1412,6 +1421,7 @@ class Pan123:
             raise RuntimeError("分块上传失败")
 
         # ---- 合并分块 ----
+        logger.debug("[T-%s] 合并分块...", tid)
         uploaded_comp_data = {
             "bucket": bucket,
             "key": upload_key,
@@ -1460,6 +1470,7 @@ class Pan123:
             )
             cr = _parse_json_response(close_res)
             if cr.get("code", -1) == 0:
+                logger.debug("[T-%s] upload_complete 确认成功", tid)
                 return up_file_id
             if attempt < max_complete_retries - 1:
                 logger.warning("upload_complete 未就绪 (attempt %d): %s", attempt + 1, cr.get("message", ""))
