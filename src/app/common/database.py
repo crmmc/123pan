@@ -26,7 +26,7 @@ def get_download_part_size() -> int:
     mb = _safe_int(Database.instance().get_config("downloadPartSizeMB", 5), 5, 4, 32)
     return mb * 1024 * 1024
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def _get_db_path():
@@ -151,6 +151,7 @@ class Database:
                 total_parts   INTEGER NOT NULL DEFAULT 0,
                 block_size    INTEGER NOT NULL DEFAULT {UPLOAD_PART_SIZE},
                 etag          TEXT NOT NULL DEFAULT '',
+                file_mtime    REAL NOT NULL DEFAULT 0,
                 delete_requested INTEGER NOT NULL DEFAULT 0,
                 created_at    REAL,
                 updated_at    REAL
@@ -199,6 +200,17 @@ class Database:
                     self._conn.execute(
                         "ALTER TABLE upload_tasks ADD COLUMN delete_requested "
                         "INTEGER NOT NULL DEFAULT 0"
+                    )
+                self._conn.commit()
+            if version < 4:
+                columns = {
+                    row[1]
+                    for row in self._conn.execute("PRAGMA table_info(upload_tasks)").fetchall()
+                }
+                if "file_mtime" not in columns:
+                    self._conn.execute(
+                        "ALTER TABLE upload_tasks ADD COLUMN file_mtime "
+                        "REAL NOT NULL DEFAULT 0"
                     )
                 self._conn.commit()
             self._conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
@@ -392,8 +404,9 @@ class Database:
                 (task_id, account_name, file_name, file_size, local_path,
                  target_dir_id, status, progress, error, bucket,
                  storage_node, upload_key, upload_id_s3, up_file_id,
-                 total_parts, block_size, etag, delete_requested, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 total_parts, block_size, etag, file_mtime,
+                 delete_requested, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     account_name = excluded.account_name,
                     file_name = excluded.file_name,
@@ -411,6 +424,7 @@ class Database:
                     total_parts = excluded.total_parts,
                     block_size = excluded.block_size,
                     etag = excluded.etag,
+                    file_mtime = excluded.file_mtime,
                     delete_requested = excluded.delete_requested,
                     updated_at = excluded.updated_at
                 """,
@@ -424,7 +438,8 @@ class Database:
                     task.get("upload_id_s3", ""), task.get("up_file_id", 0),
                     task.get("total_parts", 0),
                     task.get("block_size", UPLOAD_PART_SIZE),
-                    task.get("etag", ""), int(task.get("delete_requested", 0)),
+                    task.get("etag", ""), task.get("file_mtime", 0),
+                    int(task.get("delete_requested", 0)),
                     now, now,
                 ),
             )

@@ -901,23 +901,31 @@ class Pan123:
                 logger.warning("断点续传缺少 etag，改为重新上传")
                 resume_info = None
             else:
-                if signals and hasattr(signals, "status"):
-                    signals.status.emit("校验中")
-                stop_state, readable_hash = _calculate_file_md5(
-                    file_path,
-                    fsize,
-                    task=task,
-                    emit_progress=False,
-                )
-                if stop_state:
-                    return stop_state
-                if readable_hash != stored_hash:
-                    logger.warning("检测到本地文件已变更，放弃旧续传会话并重新上传")
-                    if signals:
-                        signals.progress.emit(0)
-                    if speed_tracker:
-                        speed_tracker.reset()
-                    resume_info = None
+                # 快速检查：文件大小 + mtime 未变则跳过 MD5 校验
+                stored_mtime = resume_info.get("file_mtime", 0)
+                stored_size = resume_info.get("file_size", 0)
+                current_mtime = file_path_obj.stat().st_mtime
+                if stored_mtime and stored_size == fsize and current_mtime == stored_mtime:
+                    logger.info("文件大小与修改时间未变，跳过 MD5 校验")
+                    readable_hash = stored_hash
+                else:
+                    if signals and hasattr(signals, "status"):
+                        signals.status.emit("校验中")
+                    stop_state, readable_hash = _calculate_file_md5(
+                        file_path,
+                        fsize,
+                        task=task,
+                        emit_progress=False,
+                    )
+                    if stop_state:
+                        return stop_state
+                    if readable_hash != stored_hash:
+                        logger.warning("检测到本地文件已变更，放弃旧续传会话并重新上传")
+                        if signals:
+                            signals.progress.emit(0)
+                        if speed_tracker:
+                            speed_tracker.reset()
+                        resume_info = None
 
         if resume_info and resume_info.get("upload_id"):
             # ---- 断点续传：复用已有 S3 session ----
@@ -1035,6 +1043,7 @@ class Pan123:
                     "upload_key": upload_key, "upload_id": upload_id,
                     "up_file_id": up_file_id, "total_parts": total_parts,
                     "block_size": block_size, "etag": readable_hash,
+                    "file_mtime": file_path_obj.stat().st_mtime,
                 })
 
             # 校验完成，切换到上传状态并重置进度

@@ -122,6 +122,7 @@ class UploadTask(TransferTask):
         self.total_parts = 0
         self.block_size = get_upload_part_size()
         self.etag = ""
+        self.file_mtime = 0.0
 
 
 class DownloadTask(TransferTask):
@@ -192,6 +193,8 @@ class UploadThread(QThread):
             "total_parts": t.total_parts,
             "block_size": t.block_size,
             "etag": t.etag,
+            "file_mtime": t.file_mtime,
+            "file_size": t.file_size,
             "done_parts": done_parts,
         }
 
@@ -412,15 +415,15 @@ class TransferInterface(QWidget):
         if not h:
             return
         h.setSectionResizeMode(h.ResizeMode.Interactive)
-        h.setStretchLastSection(True)
-        h.resizeSection(COL_NAME, 250)
+        h.setSectionResizeMode(COL_NAME, h.ResizeMode.Stretch)
+        h.setStretchLastSection(False)
         h.resizeSection(COL_SIZE, 80)
         h.resizeSection(COL_PERCENT, 70)
         h.resizeSection(COL_SPEED, 90)
         h.resizeSection(COL_ETA, 80)
         h.resizeSection(COL_STATUS, 70)
         h.resizeSection(COL_CONN, 60)
-        # COL_ACTION 由 stretchLastSection 填充
+        h.resizeSection(COL_ACTION, 160)
         h.sectionDoubleClicked.connect(lambda idx, t=table: t.resizeColumnToContents(idx))
 
     def __initWidget(self):
@@ -528,6 +531,7 @@ class TransferInterface(QWidget):
             task.total_parts = record.get("total_parts", 0)
             task.block_size = record.get("block_size", UPLOAD_PART_SIZE)
             task.etag = record.get("etag", "")
+            task.file_mtime = record.get("file_mtime", 0)
             self.upload_tasks.append(task)
         self.__update_upload_table()
 
@@ -792,6 +796,7 @@ class TransferInterface(QWidget):
         task.total_parts = info.get("total_parts", 0)
         task.block_size = info.get("block_size", UPLOAD_PART_SIZE)
         task.etag = info.get("etag", "")
+        task.file_mtime = info.get("file_mtime", 0)
         if task.db_task_id:
             Database.instance().update_upload_task(
                 task.db_task_id,
@@ -799,6 +804,7 @@ class TransferInterface(QWidget):
                 upload_key=task.upload_key, upload_id_s3=task.upload_id_s3,
                 up_file_id=task.up_file_id, total_parts=task.total_parts,
                 block_size=task.block_size, etag=task.etag,
+                file_mtime=task.file_mtime,
             )
 
     def __on_upload_part_done(self, task, part_index, etag):
