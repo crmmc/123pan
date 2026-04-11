@@ -1171,7 +1171,7 @@ class Pan123:
             with progress_lock:
                 active_workers[0] += 1
                 if signals and hasattr(signals, "conn_info"):
-                    signals.conn_info.emit(active_workers[0], allowed_workers[0])
+                    signals.conn_info.emit(active_workers[0], max_workers)
             logger.debug("上传 worker 启动: active=%s", active_workers[0])
 
             try:
@@ -1250,10 +1250,6 @@ class Pan123:
                                             probe_thread_name[0] = None
                                             if allowed_workers[0] < max_workers:
                                                 allowed_workers[0] += 1
-                                            if signals and hasattr(signals, "conn_info"):
-                                                signals.conn_info.emit(
-                                                    active_workers[0], allowed_workers[0]
-                                                )
                                     probe_promoted = True
                                     worker_feedback.set()
                                 with progress_lock:
@@ -1284,10 +1280,6 @@ class Pan123:
                                         new_limit = max(1, active_workers[0] - 1)
                                         if new_limit < allowed_workers[0]:
                                             allowed_workers[0] = new_limit
-                                    if signals and hasattr(signals, "conn_info"):
-                                        signals.conn_info.emit(
-                                            active_workers[0], allowed_workers[0]
-                                        )
                                 part_queue.put(part)
                                 worker_feedback.set()
                                 logger.debug(
@@ -1326,10 +1318,6 @@ class Pan123:
                                         new_limit = max(1, active_workers[0] - 1)
                                         if new_limit < allowed_workers[0]:
                                             allowed_workers[0] = new_limit
-                                    if signals and hasattr(signals, "conn_info"):
-                                        signals.conn_info.emit(
-                                            active_workers[0], allowed_workers[0]
-                                        )
                                 part_queue.put(part)
                                 worker_feedback.set()
                                 logger.warning(
@@ -1354,10 +1342,6 @@ class Pan123:
                                             "连接被重置，降低并发至 %s",
                                             allowed_workers[0],
                                         )
-                                        if signals and hasattr(signals, "conn_info"):
-                                            signals.conn_info.emit(
-                                                active_workers[0], allowed_workers[0]
-                                            )
                                     part_queue.put(part)
                                     worker_feedback.set()
                                     logger.warning(
@@ -1384,14 +1368,14 @@ class Pan123:
                     active_workers[0] -= 1
                     if signals and hasattr(signals, "conn_info"):
                         signals.conn_info.emit(
-                            active_workers[0], allowed_workers[0]
+                            active_workers[0], max_workers
                         )
                 worker_feedback.set()
                 logger.debug("上传 worker 退出: active=%s", active_workers[0])
 
-        def _notify_conn(active, allowed):
+        def _notify_conn(active, _allowed):
             if signals and hasattr(signals, "conn_info"):
-                signals.conn_info.emit(active, allowed)
+                signals.conn_info.emit(active, max_workers)
 
         slow_start_scheduler(
             worker_fn=_upload_worker,
@@ -1418,7 +1402,7 @@ class Pan123:
         if signals and fsize:
             signals.progress.emit(int(uploaded[0] * 100 / fsize))
         if signals and hasattr(signals, "conn_info"):
-            signals.conn_info.emit(0, allowed_workers[0])
+            signals.conn_info.emit(0, max_workers)
 
         if task and getattr(task, "is_cancelled", False):
             return "已取消"

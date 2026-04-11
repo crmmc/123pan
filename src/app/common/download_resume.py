@@ -378,13 +378,12 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
                 probe_thread_name[0] = None
                 if allowed_workers[0] < max_workers:
                     allowed_workers[0] += 1
-                _notify_conn_info(signals, active_workers[0], allowed_workers[0])
         worker_feedback.set()
 
     def worker():
         with progress_lock:
             active_workers[0] += 1
-            _notify_conn_info(signals, active_workers[0], allowed_workers[0])
+            _notify_conn_info(signals, active_workers[0], max_workers)
         try:
             while not failed[0]:
                 stop_result = _get_stop_result(task)
@@ -422,7 +421,6 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
                             new_limit = max(1, active_workers[0] - 1)
                             if new_limit < allowed_workers[0]:
                                 allowed_workers[0] = new_limit
-                        _notify_conn_info(signals, active_workers[0], allowed_workers[0])
                     part_queue.put(part)
                     worker_feedback.set()
                     time.sleep(RATE_LIMIT_BACKOFF)
@@ -434,7 +432,6 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
                             probe_thread_name[0] = None
                         else:
                             allowed_workers[0] = max(1, allowed_workers[0] - 1)
-                        _notify_conn_info(signals, active_workers[0], allowed_workers[0])
                     worker_feedback.set()
                     return  # worker 退出，调度器补充
                 failed[0] = True
@@ -445,7 +442,7 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
                 if threading.current_thread().name == probe_thread_name[0]:
                     probe_thread_name[0] = None
                 active_workers[0] -= 1
-                _notify_conn_info(signals, active_workers[0], allowed_workers[0])
+                _notify_conn_info(signals, active_workers[0], max_workers)
             worker_feedback.set()
 
     _save_download_status(resume_id, total, reused_bytes, "下载中")
@@ -462,11 +459,11 @@ def _download_with_resume(redirect_url, out_path, total, signals, task, resume_t
         probe_thread_name=probe_thread_name,
         worker_feedback=worker_feedback,
         is_stopped_fn=lambda: bool(_get_stop_result(task)),
-        notify_conn_fn=lambda a, al: _notify_conn_info(signals, a, al),
+        notify_conn_fn=lambda a, _al: _notify_conn_info(signals, a, max_workers),
         thread_prefix="dl_worker",
     )
 
-    _notify_conn_info(signals, 0, allowed_workers[0])
+    _notify_conn_info(signals, 0, max_workers)
     _notify_progress(signals, total, downloaded[0])
 
     if _is_task_paused(task):
