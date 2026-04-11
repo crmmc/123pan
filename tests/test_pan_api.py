@@ -11,7 +11,7 @@ import requests
 
 from src.app.common import database as database_module
 from src.app.common.database import Database
-from src.app.common.api import Pan123, RateLimitError, UPLOAD_PART_SIZE
+from src.app.common.api import Pan123, RateLimitError, UPLOAD_PART_SIZE, _RWLock
 from src.app.view.transfer_interface import UploadThread
 
 
@@ -54,7 +54,7 @@ def pan():
         p.parent_file_id = 0
         p.parent_file_list = [0]
         p._login_lock = threading.Lock()
-        p._session_lock = threading.Lock()
+        p._session_lock = _RWLock()
 
         # 创建带重试的 session（和 Pan123.__init__ 一致）
         from requests.adapters import HTTPAdapter

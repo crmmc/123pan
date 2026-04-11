@@ -9,6 +9,7 @@ import re
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -25,6 +26,43 @@ from .const import all_device_type, all_os_versions
 from .log import get_logger
 
 logger = get_logger(__name__)
+
+
+class _RWLock:
+    """简易读写锁：多读并行，写独占。"""
+
+    def __init__(self):
+        self._cond = threading.Condition(threading.Lock())
+        self._readers = 0
+        self._writer = False
+
+    @contextmanager
+    def rlock(self):
+        with self._cond:
+            while self._writer:
+                self._cond.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._cond.notify_all()
+
+    @contextmanager
+    def wlock(self):
+        with self._cond:
+            while self._writer or self._readers > 0:
+                self._cond.wait()
+            self._writer = True
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._writer = False
+                self._cond.notify_all()
+
 
 INITIAL_BACKOFF_SECONDS = 1.0
 MAX_BACKOFF_SECONDS = 30.0
@@ -148,7 +186,7 @@ class Pan123:
         self.session = requests.Session()
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
-        self._session_lock = threading.Lock()
+        self._session_lock = _RWLock()
         if readfile:
             self.read_ini(user_name, password, input_pwd, authorization)
         else:
@@ -223,17 +261,18 @@ class Pan123:
             if self.on_token_expired:
                 self.on_token_expired()
             raise TokenExpiredError("token 过期且无保存密码，无法自动刷新")
-        with self._login_lock:
-            current_authorization = self.header_logined["authorization"]
-            if request_authorization != current_authorization:
-                return
-            login_code = self._login_without_lock()
-        if login_code not in (0, 200):
-            raise RuntimeError(f"token 刷新失败: {login_code}")
+        with self._session_lock.wlock():
+            with self._login_lock:
+                current_authorization = self.header_logined["authorization"]
+                if request_authorization != current_authorization:
+                    return
+                login_code = self._login_without_lock()
+            if login_code not in (0, 200):
+                raise RuntimeError(f"token 刷新失败: {login_code}")
 
     def _raw_request(self, method, url, **kwargs):
         """基础请求包装：_session_lock + 限流检测。"""
-        with self._session_lock:
+        with self._session_lock.rlock():
             response = method(url, **kwargs)
         if response.status_code in RATE_LIMIT_CODES:
             raise RateLimitError(f"API 返回 {response.status_code} 限流: {url}")
