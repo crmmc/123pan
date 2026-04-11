@@ -1275,7 +1275,7 @@ class Pan123:
                                             last_progress_time[0] = now
 
                             progress_io = _ProgressIO(block, _on_chunk)
-                            resp = requests.put(url, data=progress_io, timeout=(5, 600))
+                            resp = requests.put(url, data=progress_io, timeout=(10, 120))
                             if resp.status_code in RATE_LIMIT_CODES:
                                 with progress_lock:
                                     uploaded[0] -= progress_io.reported
@@ -1304,6 +1304,8 @@ class Pan123:
                                 signals.part_done.emit(pn, part_etag)
                             with progress_lock:
                                 _reset_transient_failure_count(transient_failure_count)
+                                if allowed_workers[0] < max_workers:
+                                    allowed_workers[0] = min(max_workers, allowed_workers[0] + 1)
                             worker_feedback.set()
                             logger.debug("[T-%s W-%s] 分块 %s 上传成功", tid, wid, pn)
                             break
@@ -1311,7 +1313,7 @@ class Pan123:
                             if progress_io is not None and progress_io.reported > 0:
                                 with progress_lock:
                                     uploaded[0] -= progress_io.reported
-                            is_conn_err = isinstance(exc, requests.ConnectionError)
+                            is_conn_err = isinstance(exc, (requests.ConnectionError, requests.Timeout))
                             is_rate_limit_err = isinstance(exc, RateLimitError)
                             if is_rate_limit_err:
                                 with progress_lock:
